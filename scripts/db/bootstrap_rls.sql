@@ -1,0 +1,2 @@
+-- Bootstrap RLS placeholder
+-- Add SQL to initialize Row Level Security policies here

@@ -1,0 +1,2 @@
+-- Sanity checks for DB
+-- Add quick validation queries here

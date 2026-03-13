@@ -1,0 +1,100 @@
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import text
+
+from app.core.security.jwt import decode_access_token
+from app.db import async_session_factory, set_tenant_guc
+
+security = HTTPBearer(auto_error=False)
+
+
+async def get_current_principal(
+    request: Request,
+    creds: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
+    if not creds:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization header",
+        )
+
+    token = creds.credentials
+    try:
+        payload = decode_access_token(token)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+
+    user_id = payload.get("sub")
+    tenant_id = payload.get("tenant_id")
+    if not user_id or not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token claims",
+        )
+
+    header_tenant_id = getattr(request.state, "header_tenant_id", None)
+    if header_tenant_id and str(header_tenant_id) != str(tenant_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tenant mismatch (header tenant does not match token tenant)",
+        )
+
+    async with async_session_factory() as session:
+        await set_tenant_guc(session, str(tenant_id))
+        result = await session.execute(
+            text(
+                """
+                select
+                    t.is_active as tenant_is_active,
+                    u.is_active as user_is_active,
+                    tu.is_active as membership_is_active
+                from public.tenant_users tu
+                join public.users u
+                  on u.id = tu.user_id
+                join public.tenants t
+                  on t.id = tu.tenant_id
+                where tu.tenant_id = cast(:tenant_id as varchar)
+                  and tu.user_id = cast(:user_id as varchar)
+                """
+            ),
+            {"tenant_id": str(tenant_id), "user_id": str(user_id)},
+        )
+        row = result.mappings().first()
+
+    if not row or not row["tenant_is_active"] or not row["user_is_active"] or not row["membership_is_active"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated account is inactive",
+        )
+
+    return payload
+
+
+def get_current_user(payload: dict = Depends(get_current_principal)) -> str:
+    """
+    Returns the authenticated user id (JWT 'sub').
+    This matches how create_access_token() sets subject.
+    """
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing subject",
+        )
+    return str(user_id)
+
+
+def get_current_tenant_id(payload: dict = Depends(get_current_principal)) -> str:
+    """
+    Returns tenant_id from the JWT payload (used for tenant-scoped authorization).
+    """
+    tenant_id = payload.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing tenant_id",
+        )
+    return str(tenant_id)

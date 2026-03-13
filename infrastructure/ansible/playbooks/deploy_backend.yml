@@ -1,0 +1,6 @@
+---
+- hosts: backend
+  tasks:
+    - name: Placeholder deploy task
+      debug:
+        msg: "Deploy backend"

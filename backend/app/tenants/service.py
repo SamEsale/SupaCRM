@@ -56,6 +56,8 @@ class TenantDetails:
     id: str
     name: str
     is_active: bool
+    status: str
+    status_reason: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -131,15 +133,19 @@ async def ensure_tenant(
     await session.execute(
         text(
             """
-            insert into public.tenants (id, name, is_active)
+            insert into public.tenants (id, name, is_active, status, status_reason)
             values (
                 cast(:tenant_id as varchar),
                 cast(:tenant_name as varchar),
-                true
+                true,
+                'active',
+                null
             )
             on conflict (id) do update
               set name = excluded.name,
                   is_active = true,
+                  status = 'active',
+                  status_reason = null,
                   updated_at = now()
             """
         ),
@@ -157,7 +163,7 @@ async def get_tenant_details(session: AsyncSession, tenant_id: str) -> TenantDet
     result = await session.execute(
         text(
             """
-            select id, name, is_active, created_at, updated_at
+            select id, name, is_active, status, status_reason, created_at, updated_at
             from public.tenants
             where id = cast(:tenant_id as varchar)
             """
@@ -172,6 +178,8 @@ async def get_tenant_details(session: AsyncSession, tenant_id: str) -> TenantDet
         id=str(row["id"]),
         name=str(row["name"]),
         is_active=bool(row["is_active"]),
+        status=str(row["status"]),
+        status_reason=row["status_reason"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -189,7 +197,7 @@ async def update_tenant_details(
             set name = cast(:name as varchar),
                 updated_at = now()
             where id = cast(:tenant_id as varchar)
-            returning id, name, is_active, created_at, updated_at
+            returning id, name, is_active, status, status_reason, created_at, updated_at
             """
         ),
         {"tenant_id": tenant_id, "name": name},
@@ -202,6 +210,61 @@ async def update_tenant_details(
         id=str(row["id"]),
         name=str(row["name"]),
         is_active=bool(row["is_active"]),
+        status=str(row["status"]),
+        status_reason=row["status_reason"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _status_to_is_active(status: str) -> bool:
+    normalized = status.strip().lower()
+    if normalized == "active":
+        return True
+    if normalized in {"suspended", "disabled"}:
+        return False
+    raise ValueError(f"Unsupported tenant status: {status}")
+
+
+async def update_tenant_status(
+    session: AsyncSession,
+    tenant_id: str,
+    status: str,
+    status_reason: str | None,
+) -> TenantDetails:
+    normalized_status = status.strip().lower()
+    effective_reason = status_reason.strip() if status_reason else None
+    effective_is_active = _status_to_is_active(normalized_status)
+
+    result = await session.execute(
+        text(
+            """
+            update public.tenants
+            set status = cast(:status as varchar),
+                status_reason = cast(:status_reason as varchar),
+                is_active = :is_active,
+                updated_at = now()
+            where id = cast(:tenant_id as varchar)
+            returning id, name, is_active, status, status_reason, created_at, updated_at
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "status": normalized_status,
+            "status_reason": effective_reason,
+            "is_active": effective_is_active,
+        },
+    )
+    row = result.mappings().first()
+    if not row:
+        raise ValueError(f"Tenant does not exist: {tenant_id}")
+
+    return TenantDetails(
+        id=str(row["id"]),
+        name=str(row["name"]),
+        is_active=bool(row["is_active"]),
+        status=str(row["status"]),
+        status_reason=row["status_reason"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

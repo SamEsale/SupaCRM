@@ -1,8 +1,10 @@
-"""Dependency utilities placeholder"""
+"""
+Shared FastAPI dependency exports.
 
-from fastapi import Depends
+This module provides a stable import location for common dependencies
+used across routes and services.
+"""
 
+from app.db import get_db
 
-def get_db():
-    """Yield DB session"""
-    yield None
+__all__ = ["get_db"]

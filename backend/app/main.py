@@ -29,17 +29,6 @@ def create_app() -> FastAPI:
     )
 
     # -----------------------------------------------------------------------
-    # CORS (browser frontend support)
-    # -----------------------------------------------------------------------
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[settings.FRONTEND_BASE_URL],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    # -----------------------------------------------------------------------
     # Middleware order (important)
     # -----------------------------------------------------------------------
     # 1) Request ID (correlation / tracing)
@@ -52,8 +41,21 @@ def create_app() -> FastAPI:
     # 3) Audit context (reads request_id + tenant/user context)
     app.add_middleware(AuditContextMiddleware)
 
-    # 4) Security headers (late)
+    # 4) Security headers
     app.add_middleware(SecurityHeadersMiddleware)
+
+    # 5) CORS MUST be added last so it wraps the full app and handles
+    #    browser preflight OPTIONS requests correctly.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # -----------------------------------------------------------------------
     # Routes

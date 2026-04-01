@@ -1,20 +1,31 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
+
+
+TenantStatus = Literal["active", "suspended", "disabled"]
 
 
 class TenantOut(BaseModel):
     id: str
     name: str
     is_active: bool
+    status: TenantStatus
+    status_reason: str | None = None
     created_at: datetime
     updated_at: datetime
 
 
 class TenantUpdateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
+
+
+class TenantStatusUpdateRequest(BaseModel):
+    status: TenantStatus
+    status_reason: str | None = Field(default=None, max_length=255)
 
 
 class TenantRoleOut(BaseModel):

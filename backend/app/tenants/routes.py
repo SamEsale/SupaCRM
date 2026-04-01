@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security.deps import get_current_tenant_id
 from app.core.security.rbac import require_permission
 from app.db_deps import get_auth_db
+from app.rbac.permissions import PERMISSION_TENANT_ADMIN
 from app.tenants.schemas import (
     TenantOut,
     TenantRoleAssignmentBatchOut,
     TenantRoleAssignmentRequest,
     TenantRoleOut,
+    TenantStatusUpdateRequest,
     TenantUpdateRequest,
     TenantUserCreateRequest,
     TenantUserOut,
@@ -23,6 +27,7 @@ from app.tenants.service import (
     list_tenant_users,
     provision_tenant_user,
     update_tenant_details,
+    update_tenant_status,
 )
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
@@ -43,7 +48,7 @@ def _raise_for_service_error(exc: ValueError) -> HTTPException:
 @router.get(
     "/me",
     response_model=TenantOut,
-    dependencies=[Depends(require_permission("tenant.read"))],
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
 )
 async def get_current_tenant(
     tenant_id: str = Depends(get_current_tenant_id),
@@ -52,13 +57,13 @@ async def get_current_tenant(
     tenant = await get_tenant_details(db, tenant_id=tenant_id)
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    return TenantOut(**tenant.__dict__)
+    return TenantOut(**asdict(tenant))
 
 
 @router.patch(
     "/me",
     response_model=TenantOut,
-    dependencies=[Depends(require_permission("tenant.manage"))],
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
 )
 async def update_current_tenant(
     payload: TenantUpdateRequest,
@@ -73,42 +78,62 @@ async def update_current_tenant(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return TenantOut(**tenant.__dict__)
+    return TenantOut(**asdict(tenant))
+
+
+@router.patch(
+    "/me/status",
+    response_model=TenantOut,
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
+)
+async def update_current_tenant_status(
+    payload: TenantStatusUpdateRequest,
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> TenantOut:
+    try:
+        tenant = await update_tenant_status(
+            db,
+            tenant_id=tenant_id,
+            status=payload.status,
+            status_reason=payload.status_reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return TenantOut(**asdict(tenant))
 
 
 @router.get(
     "/me/roles",
     response_model=list[TenantRoleOut],
-    dependencies=[Depends(require_permission("roles.read"))],
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
 )
 async def get_current_tenant_roles(
     tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_auth_db),
 ) -> list[TenantRoleOut]:
     roles = await list_tenant_roles(db, tenant_id=tenant_id)
-    return [TenantRoleOut(**role.__dict__) for role in roles]
+    return [TenantRoleOut(**asdict(role)) for role in roles]
 
 
 @router.get(
     "/me/users",
     response_model=list[TenantUserOut],
-    dependencies=[Depends(require_permission("users.read"))],
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
 )
 async def get_current_tenant_users(
     tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_auth_db),
 ) -> list[TenantUserOut]:
     users = await list_tenant_users(db, tenant_id=tenant_id)
-    return [TenantUserOut(**user.__dict__) for user in users]
+    return [TenantUserOut(**asdict(user)) for user in users]
 
 
 @router.post(
     "/me/users",
     response_model=TenantUserProvisionOut,
-    dependencies=[
-        Depends(require_permission("users.write")),
-        Depends(require_permission("roles.write")),
-    ],
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
 )
 async def create_or_attach_tenant_user(
     payload: TenantUserCreateRequest,
@@ -147,7 +172,7 @@ async def create_or_attach_tenant_user(
 @router.post(
     "/me/users/{user_id}/roles",
     response_model=TenantRoleAssignmentBatchOut,
-    dependencies=[Depends(require_permission("roles.write"))],
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
 )
 async def assign_roles_for_tenant_user(
     user_id: str,

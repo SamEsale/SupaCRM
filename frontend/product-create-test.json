@@ -1,0 +1,9 @@
+{
+  "name": "SupaCRM Starter Plan",
+  "sku": "SUPA-STARTER-001",
+  "description": "Entry-level SaaS plan for small teams.",
+  "unit_price": 499.00,
+  "currency": "USD",
+  "is_active": true,
+  "images": []
+}

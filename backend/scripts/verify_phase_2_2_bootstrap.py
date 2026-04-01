@@ -213,3 +213,5 @@ async def _get_admin_role_assignments(session, tenant_id: str, admin_email: str)
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+    

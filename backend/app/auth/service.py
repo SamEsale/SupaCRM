@@ -227,7 +227,7 @@ async def login_user(
         try:
             await set_tenant_guc(session, tenant_id)
             tenant = await _get_tenant_state(session, tenant_id)
-            if not tenant or not tenant["is_active"]:
+            if not tenant:
                 await session.rollback()
                 await _write_audit_log(
                     tenant_id=tenant_id,
@@ -237,9 +237,31 @@ async def login_user(
                     resource="auth",
                     status_code=HTTPStatus.UNAUTHORIZED,
                     message="Login failed",
-                    meta={"reason": "tenant_inactive_or_missing", "email": normalized_email},
+                    meta={"reason": "tenant_missing", "email": normalized_email},
                 )
                 raise AuthFlowError(HTTPStatus.UNAUTHORIZED, "Invalid credentials")
+
+            tenant_status = str(tenant["status"])
+            if tenant_status != "active":
+                await session.rollback()
+                await _write_audit_log(
+                    tenant_id=tenant_id,
+                    action="auth.login.blocked",
+                    actor_ip=ip_address,
+                    request_id=request_id,
+                    resource="auth",
+                    status_code=HTTPStatus.FORBIDDEN,
+                    message="Login blocked by tenant lifecycle",
+                    meta={
+                        "reason": "tenant_not_active",
+                        "tenant_status": tenant_status,
+                        "email": normalized_email,
+                    },
+                )
+                raise AuthFlowError(
+                    HTTPStatus.FORBIDDEN,
+                    "Tenant is not active. Access has been blocked.",
+                )
 
             identity = await _get_identity_by_email(session, tenant_id, normalized_email)
             if not identity:
@@ -373,10 +395,36 @@ async def refresh_user_tokens(
             credentials = await _get_credentials_state(session, user_id)
             refresh_row = await _get_refresh_token_record(session, token_id)
 
+            if not tenant:
+                await session.rollback()
+                raise AuthFlowError(HTTPStatus.UNAUTHORIZED, "Invalid refresh token")
+
+            tenant_status = str(tenant["status"])
+            if tenant_status != "active":
+                await session.rollback()
+                await _write_audit_log(
+                    tenant_id=tenant_id,
+                    action="auth.refresh.blocked",
+                    actor_user_id=user_id,
+                    actor_ip=ip_address,
+                    request_id=request_id,
+                    resource="auth",
+                    resource_id=user_id,
+                    status_code=HTTPStatus.FORBIDDEN,
+                    message="Token refresh blocked by tenant lifecycle",
+                    meta={
+                        "reason": "tenant_not_active",
+                        "tenant_status": tenant_status,
+                        "family_id": family_id,
+                    },
+                )
+                raise AuthFlowError(
+                    HTTPStatus.FORBIDDEN,
+                    "Tenant is not active. Access has been blocked.",
+                )
+
             if (
-                not tenant
-                or not tenant["is_active"]
-                or not identity
+                not identity
                 or not identity["user_is_active"]
                 or not identity["membership_is_active"]
                 or not credentials
@@ -966,7 +1014,7 @@ async def _get_tenant_state(session: AsyncSession, tenant_id: str) -> dict | Non
     result = await session.execute(
         text(
             """
-            select id, name, is_active
+            select id, name, status, is_active
             from public.tenants
             where id = cast(:tenant_id as varchar)
             """

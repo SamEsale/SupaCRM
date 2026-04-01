@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, Request, status
+﻿from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 
@@ -48,6 +48,7 @@ async def get_current_principal(
             text(
                 """
                 select
+                    t.status as tenant_status,
                     t.is_active as tenant_is_active,
                     u.is_active as user_is_active,
                     tu.is_active as membership_is_active
@@ -64,12 +65,31 @@ async def get_current_principal(
         )
         row = result.mappings().first()
 
-    if not row or not row["tenant_is_active"] or not row["user_is_active"] or not row["membership_is_active"]:
+    if not row:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authenticated account is inactive",
         )
 
+    tenant_status = row["tenant_status"]
+
+    if tenant_status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant is not active. Access has been blocked.",
+        )
+
+    if (
+        not row["tenant_is_active"]
+        or not row["user_is_active"]
+        or not row["membership_is_active"]
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated account is inactive",
+        )
+
+    payload["tenant_status"] = tenant_status
     return payload
 
 
@@ -98,3 +118,19 @@ def get_current_tenant_id(payload: dict = Depends(get_current_principal)) -> str
             detail="Invalid token: missing tenant_id",
         )
     return str(tenant_id)
+
+
+def require_active_tenant(_: dict = Depends(get_current_principal)) -> None:
+    """
+    Explicit lifecycle dependency for protected routers.
+
+    get_current_principal() already enforces:
+    - valid token
+    - tenant membership
+    - tenant lifecycle
+    - active user
+    - active membership
+
+    This wrapper exists to make lifecycle gating explicit at router level.
+    """
+    return None

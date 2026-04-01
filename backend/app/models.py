@@ -20,7 +20,14 @@ import app.audit.models  # noqa: F401
 import app.tenants.models  # noqa: F401
 import app.tenants.membership_models  # noqa: F401
 
-
 # Auth / RBAC
 import app.auth.models  # noqa: F401
 import app.rbac.models  # noqa: F401
+
+# CRM
+import app.crm.models  # noqa: F401
+
+# Sales / Finance
+import app.sales.models  # noqa: F401
+import app.invoicing.models  # noqa: F401
+import app.quotes.models  # noqa: F401

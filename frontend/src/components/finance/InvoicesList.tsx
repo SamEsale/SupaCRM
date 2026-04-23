@@ -19,9 +19,9 @@ type InvoicesListProps = {
 
 const NEXT_STATUS_OPTIONS: Record<InvoiceStatus, InvoiceStatus[]> = {
     draft: ["issued", "cancelled"],
-    issued: ["paid", "overdue", "cancelled"],
+    issued: ["overdue", "cancelled"],
     paid: [],
-    overdue: ["paid", "cancelled"],
+    overdue: ["cancelled"],
     cancelled: [],
 };
 
@@ -203,6 +203,17 @@ export default function InvoicesList({
                                         >
                                             {invoice.number}
                                         </Link>
+                                        {invoice.source_quote_id ? (
+                                            <p className="mt-1 text-xs text-slate-500">
+                                                From quote{" "}
+                                                <Link
+                                                    href={`/finance/quotes/${invoice.source_quote_id}`}
+                                                    className="underline underline-offset-2"
+                                                >
+                                                    {invoice.source_quote_id}
+                                                </Link>
+                                            </p>
+                                        ) : null}
                                     </td>
                                     <td className="px-4 py-3 text-sm">
                                         {getCompanyName(companies, invoice.company_id)}
@@ -224,7 +235,18 @@ export default function InvoicesList({
                                     </td>
                                     <td className="px-4 py-3 text-sm">
                                         {nextActions.length === 0 ? (
-                                            <span className="text-slate-400">No actions</span>
+                                            <div className="flex flex-wrap gap-2">
+                                                {(invoice.status === "issued" || invoice.status === "overdue") ? (
+                                                    <Link
+                                                        href={`/finance/invoices/${invoice.id}`}
+                                                        className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                                                    >
+                                                        Record payment
+                                                    </Link>
+                                                ) : (
+                                                    <span className="text-slate-400">No actions</span>
+                                                )}
+                                            </div>
                                         ) : (
                                             <div className="flex flex-wrap gap-2">
                                                 {nextActions.map((nextStatus) => (
@@ -245,6 +267,14 @@ export default function InvoicesList({
                                                             : `Mark ${formatStatus(nextStatus)}`}
                                                     </button>
                                                 ))}
+                                                {(invoice.status === "issued" || invoice.status === "overdue") ? (
+                                                    <Link
+                                                        href={`/finance/invoices/${invoice.id}`}
+                                                        className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                                                    >
+                                                        Record payment
+                                                    </Link>
+                                                ) : null}
                                             </div>
                                         )}
 

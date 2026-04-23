@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { useAuth } from "@/hooks/use-auth";
 
@@ -14,14 +14,26 @@ export default function ProtectedRoute({
 }: ProtectedRouteProps) {
     const router = useRouter();
     const auth = useAuth();
+    const [isMounted, setIsMounted] = useState(false);
 
     useEffect(() => {
-        if (auth.isReady && !auth.isAuthenticated) {
+        const frame = window.requestAnimationFrame(() => {
+            setIsMounted(true);
+        });
+
+        return () => {
+            window.cancelAnimationFrame(frame);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (isMounted && auth.isReady && !auth.isAuthenticated) {
             router.replace("/login");
         }
-    }, [auth.isAuthenticated, auth.isReady, router]);
+    }, [auth.isAuthenticated, auth.isReady, isMounted, router]);
 
-    if (!auth.isReady) {
+    // Keep the first server render and the first client render identical.
+    if (!isMounted || !auth.isReady) {
         return (
             <main className="flex min-h-screen items-center justify-center bg-slate-100 px-6">
                 <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 shadow-sm">

@@ -36,3 +36,21 @@ class AuditLogQuery(BaseModel):
     request_id: Optional[str] = None
     limit: int = Field(default=50, ge=1, le=200)
     offset: int = Field(default=0, ge=0)
+
+
+class RecentAuditActivityOut(BaseModel):
+    id: str
+    action: str
+    resource: str | None = None
+    resource_id: str | None = None
+    status_code: int | None = None
+    message: str | None = None
+    actor_user_id: str | None = None
+    actor_full_name: str | None = None
+    actor_email: str | None = None
+    created_at: datetime
+
+
+class RecentAuditActivityListResponse(BaseModel):
+    items: list[RecentAuditActivityOut]
+    total: int

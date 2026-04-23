@@ -14,6 +14,7 @@ export interface GetQuotesParams {
     status?: QuoteStatus;
     company_id?: string;
     number?: string;
+    source_deal_id?: string;
     limit?: number;
     offset?: number;
 }
@@ -36,6 +37,11 @@ export async function createQuote(
     payload: QuoteCreateRequest,
 ): Promise<Quote> {
     const response = await apiClient.post<Quote>("/quotes", payload);
+    return response.data;
+}
+
+export async function convertDealToQuote(dealId: string): Promise<Quote> {
+    const response = await apiClient.post<Quote>(`/quotes/from-deal/${dealId}`);
     return response.data;
 }
 

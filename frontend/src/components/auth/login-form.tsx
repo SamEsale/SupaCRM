@@ -1,20 +1,28 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
 import { getCurrentUser, login } from "@/services/auth.service";
+import { useToast } from "@/components/feedback/ToastProvider";
 import {
     setAuthStorage,
     setTenantId,
     setTokenStorage,
 } from "@/lib/auth-storage";
+import { buildLoginRequestPayload } from "@/components/auth/login-payload";
+import { getApiErrorMessage } from "@/lib/api-errors";
 
 interface LoginFormState {
     tenantId: string;
     email: string;
     password: string;
+}
+
+interface LoginFormProps {
+    isLocalLogin: boolean;
 }
 
 const initialState: LoginFormState = {
@@ -25,16 +33,12 @@ const initialState: LoginFormState = {
 
 function getErrorMessage(error: unknown): string {
     if (axios.isAxiosError(error)) {
-        const apiMessage =
-            error.response?.data?.detail ||
-            error.response?.data?.message ||
-            error.message;
+        return getApiErrorMessage(error, "Login request failed.");
+    }
 
-        if (typeof apiMessage === "string" && apiMessage.trim().length > 0) {
-            return apiMessage;
-        }
-
-        return "Login request failed.";
+    const normalizedMessage = getApiErrorMessage(error, "");
+    if (normalizedMessage.trim().length > 0) {
+        return normalizedMessage;
     }
 
     if (error instanceof Error) {
@@ -44,9 +48,9 @@ function getErrorMessage(error: unknown): string {
     return "An unexpected error occurred.";
 }
 
-export default function LoginForm() {
+export default function LoginForm({ isLocalLogin }: LoginFormProps) {
     const router = useRouter();
-
+    const toast = useToast();
     const [form, setForm] = useState<LoginFormState>(initialState);
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
     const [errorMessage, setErrorMessage] = useState<string>("");
@@ -68,22 +72,28 @@ export default function LoginForm() {
         setIsSubmitting(true);
 
         try {
-            const normalizedTenantId = form.tenantId.trim();
-
-            const tokenResponse = await login({
-                tenant_id: normalizedTenantId,
-                email: form.email.trim(),
+            const loginPayload = buildLoginRequestPayload({
+                isLocalLogin,
+                tenantId: form.tenantId,
+                email: form.email,
                 password: form.password,
             });
+            const tokenResponse = await login(loginPayload);
 
-            setTenantId(normalizedTenantId);
+            const resolvedTenantId =
+                tokenResponse.tenant_id || loginPayload.tenant_id || "";
+            if (!resolvedTenantId) {
+                throw new Error("Tenant ID could not be resolved for this login.");
+            }
+
+            setTenantId(resolvedTenantId);
 
             setTokenStorage(
                 tokenResponse.access_token,
                 tokenResponse.refresh_token,
             );
 
-            const currentUser = await getCurrentUser(normalizedTenantId);
+            const currentUser = await getCurrentUser(resolvedTenantId);
 
             setAuthStorage(
                 tokenResponse.access_token,
@@ -94,7 +104,9 @@ export default function LoginForm() {
             router.push("/dashboard");
             router.refresh();
         } catch (error: unknown) {
-            setErrorMessage(getErrorMessage(error));
+            const message = getErrorMessage(error);
+            setErrorMessage(message);
+            toast.error(message);
         } finally {
             setIsSubmitting(false);
         }
@@ -105,29 +117,35 @@ export default function LoginForm() {
             <h1 className="text-2xl font-bold text-slate-900">Login</h1>
 
             <p className="mt-2 text-sm text-slate-600">
-                Sign in to SupaCRM with your username, email, and password.
+                Sign in to SupaCRM with your email and password.
             </p>
 
             <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
-                <div>
-                    <label
-                        htmlFor="tenantId"
-                        className="mb-1 block text-sm font-medium text-slate-700"
-                    >
-                        Username
-                    </label>
-                    <input
-                        id="tenantId"
-                        name="tenantId"
-                        type="text"
-                        value={form.tenantId}
-                        onChange={handleChange}
-                        placeholder="Enter username"
-                        autoComplete="username"
-                        required
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                    />
-                </div>
+                {!isLocalLogin ? (
+                    <div>
+                        <label
+                            htmlFor="tenantId"
+                            className="mb-1 block text-sm font-medium text-slate-700"
+                        >
+                            Tenant ID
+                        </label>
+                        <input
+                            id="tenantId"
+                            name="tenantId"
+                            type="text"
+                            value={form.tenantId}
+                            onChange={handleChange}
+                            placeholder="Enter tenant id"
+                            autoComplete="organization"
+                            required
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                        />
+                    </div>
+                ) : (
+                    <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                        Local development login resolves the tenant from your email automatically.
+                    </p>
+                )}
 
                 <div>
                     <label
@@ -183,6 +201,13 @@ export default function LoginForm() {
                     {isSubmitting ? "Signing in..." : "Sign in"}
                 </button>
             </form>
+
+            <p className="mt-4 text-sm text-slate-600">
+                Need a new workspace?{" "}
+                <Link href="/register" className="font-medium text-slate-900 underline underline-offset-4">
+                    Start here
+                </Link>
+            </p>
         </div>
     );
 }

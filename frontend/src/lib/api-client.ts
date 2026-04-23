@@ -1,7 +1,19 @@
-import axios, { AxiosError } from "axios";
+import axios, {
+    AxiosError,
+    AxiosHeaders,
+    type AxiosRequestConfig,
+} from "axios";
 
 import { API_BASE_URL } from "@/constants/env";
-import { getAccessToken, getTenantId } from "@/lib/auth-storage";
+import { applyNormalizedApiErrorMessage } from "@/lib/api-errors";
+import {
+    clearAuthStorage,
+    getAccessToken,
+    getRefreshToken,
+    getTenantId,
+    updateAuthTokens,
+} from "@/lib/auth-storage";
+import type { TokenResponse } from "@/types/auth";
 
 export const apiClient = axios.create({
     baseURL: API_BASE_URL,
@@ -21,14 +33,75 @@ function normalizePath(url: string): string {
 function isPublicPath(path: string): boolean {
     return (
         path.startsWith("/auth/login") ||
+        path.startsWith("/auth/register") ||
         path.startsWith("/auth/refresh") ||
         path.startsWith("/auth/password-reset") ||
+        path.startsWith("/commercial/catalog") ||
         path.startsWith("/health") ||
         path.startsWith("/docs") ||
         path.startsWith("/openapi") ||
         path.startsWith("/redoc") ||
         path.startsWith("/internal/bootstrap")
     );
+}
+
+interface RetryableRequestConfig extends AxiosRequestConfig {
+    _retry?: boolean;
+}
+
+let refreshInFlight: Promise<void> | null = null;
+
+export const authNavigation = {
+    redirectToLogin(): void {
+        if (typeof window === "undefined") {
+            return;
+        }
+
+        if (window.location.pathname !== "/login") {
+            window.location.replace("/login");
+        }
+    },
+};
+
+function clearSessionAndRedirect(): void {
+    clearAuthStorage();
+    authNavigation.redirectToLogin();
+}
+
+async function performRefresh(): Promise<void> {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) {
+        throw new Error("Missing refresh token");
+    }
+
+    const response = await axios.post<TokenResponse>(
+        `${API_BASE_URL}/auth/refresh`,
+        {
+            refresh_token: refreshToken,
+        },
+        {
+            headers: {
+                "Content-Type": "application/json",
+            },
+        },
+    );
+
+    updateAuthTokens(response.data.access_token, response.data.refresh_token);
+}
+
+function refreshSession(): Promise<void> {
+    if (!refreshInFlight) {
+        refreshInFlight = performRefresh()
+            .catch((error) => {
+                clearSessionAndRedirect();
+                throw error;
+            })
+            .finally(() => {
+                refreshInFlight = null;
+            });
+    }
+
+    return refreshInFlight;
 }
 
 apiClient.interceptors.request.use((config) => {
@@ -46,17 +119,43 @@ apiClient.interceptors.request.use((config) => {
         );
     }
 
-    if (!config.headers) {
-        config.headers = {};
-    }
-
+    const headers = AxiosHeaders.from(config.headers);
     if (accessToken) {
-        config.headers.Authorization = `Bearer ${accessToken}`;
+        headers.set("Authorization", `Bearer ${accessToken}`);
     }
 
     if (tenantId) {
-        config.headers["X-Tenant-Id"] = tenantId;
+        headers.set("X-Tenant-Id", tenantId);
     }
+
+    config.headers = headers;
 
     return config;
 });
+
+apiClient.interceptors.response.use(
+    (response) => response,
+    async (error: AxiosError) => {
+        applyNormalizedApiErrorMessage(error);
+        const originalRequest = error.config as RetryableRequestConfig | undefined;
+        const status = error.response?.status;
+
+        if (status !== 401 || !originalRequest) {
+            return Promise.reject(error);
+        }
+
+        const requestPath = normalizePath(originalRequest.url ?? "");
+        if (isPublicPath(requestPath) || originalRequest._retry) {
+            return Promise.reject(error);
+        }
+
+        originalRequest._retry = true;
+
+        try {
+            await refreshSession();
+            return apiClient(originalRequest);
+        } catch {
+            return Promise.reject(error);
+        }
+    },
+);

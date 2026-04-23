@@ -1,14 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { useAuth } from "@/hooks/use-auth";
+import {
+    parseStrictDecimalAmountInput,
+    sanitizeStrictDecimalInput,
+    TOTAL_AMOUNT_INVALID_MESSAGE,
+    shouldBlockStrictDecimalKey,
+} from "@/components/finance/amount-utils";
 import { createInvoice } from "@/services/invoices.service";
 import { getCompanies } from "@/services/companies.service";
 import { getContacts } from "@/services/contacts.service";
 import { getProducts } from "@/services/products.service";
+import { getQuoteById } from "@/services/quotes.service";
+import { getCurrentTenant } from "@/services/tenants.service";
 import type { Company, Contact } from "@/types/crm";
+import type { Quote } from "@/types/finance";
 import type { Product } from "@/types/product";
 
 type InvoiceFormState = {
@@ -41,11 +50,14 @@ const INITIAL_FORM_STATE: InvoiceFormState = {
 export default function CreateInvoicePage() {
     const auth = useAuth();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const submitLockRef = useRef(false);
+    const prefetchedQuoteId = searchParams.get("source_quote_id");
 
     const [companies, setCompanies] = useState<Company[]>([]);
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [products, setProducts] = useState<Product[]>([]);
+    const [prefillQuote, setPrefillQuote] = useState<Quote | null>(null);
 
     const [form, setForm] = useState<InvoiceFormState>(INITIAL_FORM_STATE);
     const [formErrors, setFormErrors] = useState<InvoiceFormErrors>({});
@@ -65,12 +77,25 @@ export default function CreateInvoicePage() {
 
         async function load(): Promise<void> {
             try {
-                const [companiesResponse, contactsResponse, productsResponse] =
+                const [companiesResponse, contactsResponse, productsResponse, tenantResponse] =
                     await Promise.all([
                         getCompanies(),
                         getContacts(),
                         getProducts(),
+                        getCurrentTenant().catch((error) => {
+                            console.warn("Tenant defaults could not be loaded for invoice create:", error);
+                            return null;
+                        }),
                     ]);
+
+                let resolvedPrefillQuote: Quote | null = null;
+                if (prefetchedQuoteId) {
+                    try {
+                        resolvedPrefillQuote = await getQuoteById(prefetchedQuoteId);
+                    } catch (error) {
+                        console.warn("Quote prefill could not be loaded for invoice create:", error);
+                    }
+                }
 
                 if (!isMounted) {
                     return;
@@ -79,6 +104,31 @@ export default function CreateInvoicePage() {
                 setCompanies(companiesResponse.items ?? []);
                 setContacts(contactsResponse.items ?? []);
                 setProducts(productsResponse.items ?? []);
+                setPrefillQuote(resolvedPrefillQuote);
+
+                if (resolvedPrefillQuote) {
+                    const today = new Date().toISOString().slice(0, 10);
+                    const dueDate = resolvedPrefillQuote.expiry_date || today;
+                    setForm((current) => ({
+                        ...current,
+                        company_id: resolvedPrefillQuote.company_id,
+                        contact_id: resolvedPrefillQuote.contact_id ?? "",
+                        product_id: resolvedPrefillQuote.product_id ?? "",
+                        issue_date: current.issue_date || today,
+                        due_date: current.due_date || dueDate,
+                        currency: resolvedPrefillQuote.currency,
+                        total_amount: current.total_amount || resolvedPrefillQuote.total_amount,
+                        notes: current.notes || resolvedPrefillQuote.notes || "",
+                    }));
+                } else if (tenantResponse?.default_currency) {
+                    setForm((current) => ({
+                        ...current,
+                        currency:
+                            current.currency === INITIAL_FORM_STATE.currency
+                                ? tenantResponse.default_currency || "USD"
+                                : current.currency,
+                    }));
+                }
             } catch (error) {
                 console.error("Failed to load invoice form data:", error);
             }
@@ -89,7 +139,7 @@ export default function CreateInvoicePage() {
         return () => {
             isMounted = false;
         };
-    }, [auth.accessToken, auth.isAuthenticated, auth.isReady]);
+    }, [auth.accessToken, auth.isAuthenticated, auth.isReady, prefetchedQuoteId]);
 
     const filteredContacts = useMemo(() => {
         if (!form.company_id) {
@@ -114,8 +164,7 @@ export default function CreateInvoicePage() {
     function validateForm(): InvoiceFormErrors {
         const errors: InvoiceFormErrors = {};
         const currency = form.currency.trim().toUpperCase();
-        const totalAmountRaw = form.total_amount.trim();
-        const totalAmount = Number(totalAmountRaw);
+        const totalAmountResult = parseStrictDecimalAmountInput(form.total_amount);
 
         if (!form.company_id) {
             errors.company_id = "Company is required.";
@@ -143,12 +192,8 @@ export default function CreateInvoicePage() {
             errors.currency = "Currency must be exactly 3 characters (e.g. USD).";
         }
 
-        if (!totalAmountRaw) {
-            errors.total_amount = "Total amount is required.";
-        } else if (!Number.isFinite(totalAmount)) {
-            errors.total_amount = "Total amount must be a valid number.";
-        } else if (totalAmount < 0) {
-            errors.total_amount = "Total amount cannot be negative.";
+        if (totalAmountResult.error) {
+            errors.total_amount = totalAmountResult.error;
         }
 
         return errors;
@@ -169,22 +214,33 @@ export default function CreateInvoicePage() {
             return;
         }
 
+        const totalAmountResult = parseStrictDecimalAmountInput(form.total_amount);
+        if (totalAmountResult.error || totalAmountResult.value === null) {
+            setFormErrors((current) => ({
+                ...current,
+                total_amount: totalAmountResult.error ?? TOTAL_AMOUNT_INVALID_MESSAGE,
+            }));
+            return;
+        }
+
         try {
             submitLockRef.current = true;
             setLoading(true);
 
-            await createInvoice({
+            const createdInvoice = await createInvoice({
                 company_id: form.company_id,
                 contact_id: form.contact_id ? form.contact_id : null,
                 product_id: form.product_id ? form.product_id : null,
+                source_quote_id: prefetchedQuoteId,
                 issue_date: form.issue_date,
                 due_date: form.due_date,
                 currency: form.currency.trim().toUpperCase(),
-                total_amount: Number(form.total_amount.trim()),
+                total_amount: totalAmountResult.value,
                 notes: form.notes.trim() ? form.notes.trim() : null,
             });
 
-            router.push("/finance/invoices");
+            const redirectQuery = prefetchedQuoteId ? "?createdFrom=quote" : "?created=true";
+            router.push(`/finance/invoices/${createdInvoice.id}${redirectQuery}`);
             router.refresh();
         } catch (error: unknown) {
             console.error("Failed to create invoice:", error);
@@ -217,6 +273,12 @@ export default function CreateInvoicePage() {
                 <h1 className="text-2xl font-bold text-slate-900">
                     Create Invoice
                 </h1>
+
+                {prefillQuote ? (
+                    <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                        Creating this invoice from quote <span className="font-semibold">{prefillQuote.number}</span>. Company, contact, amount, currency, and notes were carried forward from the accepted commercial context.
+                    </div>
+                ) : null}
 
                 <form onSubmit={handleSubmit} noValidate className="mt-6 space-y-4">
                     <div>
@@ -388,17 +450,22 @@ export default function CreateInvoicePage() {
                             Total Amount
                         </label>
                         <input
-                            type="number"
-                            step="0.01"
+                            type="text"
+                            inputMode="decimal"
                             placeholder="e.g. 1000.00"
                             value={form.total_amount}
                             onChange={(event) => {
                                 setForm((current) => ({
                                     ...current,
-                                    total_amount: event.target.value,
+                                    total_amount: sanitizeStrictDecimalInput(event.target.value),
                                 }));
                                 clearFieldError("total_amount");
                                 setSubmitError("");
+                            }}
+                            onKeyDown={(event) => {
+                                if (shouldBlockStrictDecimalKey(event.key)) {
+                                    event.preventDefault();
+                                }
                             }}
                             className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm ${
                                 formErrors.total_amount ? "border-red-500" : "border-slate-300"

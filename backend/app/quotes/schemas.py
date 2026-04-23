@@ -20,6 +20,7 @@ class QuoteCreateRequest(BaseModel):
     company_id: str = Field(..., min_length=1, max_length=36)
     contact_id: str | None = Field(default=None, min_length=1, max_length=36)
     deal_id: str | None = Field(default=None, min_length=1, max_length=36)
+    source_deal_id: str | None = Field(default=None, min_length=1, max_length=36)
     product_id: str | None = Field(default=None, min_length=1, max_length=36)
     issue_date: date
     expiry_date: date
@@ -52,6 +53,7 @@ class QuoteOut(BaseModel):
     company_id: str
     contact_id: str | None = None
     deal_id: str | None = None
+    source_deal_id: str | None = None
     product_id: str | None = None
     issue_date: date
     expiry_date: date

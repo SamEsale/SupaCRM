@@ -10,6 +10,12 @@ from app.core.security.rbac import require_permission
 from app.db_deps import get_auth_db
 from app.rbac.permissions import PERMISSION_TENANT_ADMIN
 from app.tenants.schemas import (
+    TenantBrandingOut,
+    TenantBrandingUpdateRequest,
+    TenantMembershipOut,
+    TenantMembershipRemovalOut,
+    TenantMembershipUpdateRequest,
+    TenantOnboardingOut,
     TenantOut,
     TenantRoleAssignmentBatchOut,
     TenantRoleAssignmentRequest,
@@ -23,9 +29,14 @@ from app.tenants.schemas import (
 from app.tenants.service import (
     assign_roles_to_tenant_user,
     get_tenant_details,
+    get_tenant_branding,
+    get_tenant_onboarding_summary,
     list_tenant_roles,
     list_tenant_users,
     provision_tenant_user,
+    remove_tenant_membership,
+    update_tenant_membership,
+    update_tenant_branding_logo,
     update_tenant_details,
     update_tenant_status,
 )
@@ -42,13 +53,16 @@ def _raise_for_service_error(exc: ValueError) -> HTTPException:
         status_code = status.HTTP_404_NOT_FOUND
     if detail.startswith("User is not a member"):
         status_code = status.HTTP_404_NOT_FOUND
+    if detail.startswith("Transfer source user is not a member"):
+        status_code = status.HTTP_404_NOT_FOUND
+    if detail.startswith("Cannot "):
+        status_code = status.HTTP_409_CONFLICT
     return HTTPException(status_code=status_code, detail=detail)
 
 
 @router.get(
     "/me",
     response_model=TenantOut,
-    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
 )
 async def get_current_tenant(
     tenant_id: str = Depends(get_current_tenant_id),
@@ -58,6 +72,22 @@ async def get_current_tenant(
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     return TenantOut(**asdict(tenant))
+
+
+@router.get(
+    "/me/onboarding",
+    response_model=TenantOnboardingOut,
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
+)
+async def get_current_tenant_onboarding(
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> TenantOnboardingOut:
+    try:
+        onboarding = await get_tenant_onboarding_summary(db, tenant_id=tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return TenantOnboardingOut(**asdict(onboarding))
 
 
 @router.patch(
@@ -75,10 +105,68 @@ async def update_current_tenant(
             db,
             tenant_id=tenant_id,
             name=payload.name.strip(),
+            legal_name=payload.legal_name,
+            address_line_1=payload.address_line_1,
+            address_line_2=payload.address_line_2,
+            city=payload.city,
+            state_region=payload.state_region,
+            postal_code=payload.postal_code,
+            country=payload.country,
+            vat_number=payload.vat_number,
+            default_currency=payload.default_currency,
+            secondary_currency=payload.secondary_currency,
+            secondary_currency_rate=payload.secondary_currency_rate,
+            brand_primary_color=payload.brand_primary_color,
+            brand_secondary_color=payload.brand_secondary_color,
+            sidebar_background_color=payload.sidebar_background_color,
+            sidebar_text_color=payload.sidebar_text_color,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        detail = str(exc)
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if detail.startswith("Tenant does not exist")
+            else status.HTTP_400_BAD_REQUEST
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
     return TenantOut(**asdict(tenant))
+
+
+@router.get(
+    "/me/branding",
+    response_model=TenantBrandingOut,
+)
+async def get_current_tenant_branding(
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> TenantBrandingOut:
+    branding = await get_tenant_branding(db, tenant_id=tenant_id)
+    if branding is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    return TenantBrandingOut(**asdict(branding))
+
+
+@router.put(
+    "/me/branding",
+    response_model=TenantBrandingOut,
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
+)
+async def update_current_tenant_branding(
+    payload: TenantBrandingUpdateRequest,
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> TenantBrandingOut:
+    try:
+        branding = await update_tenant_branding_logo(
+            db,
+            tenant_id=tenant_id,
+            logo_file_key=payload.logo_file_key.strip() if payload.logo_file_key and payload.logo_file_key.strip() else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if branding is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    return TenantBrandingOut(**asdict(branding))
 
 
 @router.patch(
@@ -200,3 +288,51 @@ async def assign_roles_for_tenant_user(
             assignment.role_name for assignment in result.role_assignments if assignment.created_assignment
         ],
     )
+
+
+@router.patch(
+    "/me/users/{user_id}/membership",
+    response_model=TenantMembershipOut,
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
+)
+async def update_membership_for_tenant_user(
+    user_id: str,
+    payload: TenantMembershipUpdateRequest,
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> TenantMembershipOut:
+    try:
+        result = await update_tenant_membership(
+            db,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            membership_is_active=payload.membership_is_active,
+            is_owner=payload.is_owner,
+            transfer_owner_from_user_id=payload.transfer_owner_from_user_id,
+        )
+    except ValueError as exc:
+        raise _raise_for_service_error(exc) from exc
+
+    return TenantMembershipOut(**asdict(result))
+
+
+@router.delete(
+    "/me/users/{user_id}/membership",
+    response_model=TenantMembershipRemovalOut,
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
+)
+async def remove_membership_for_tenant_user(
+    user_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> TenantMembershipRemovalOut:
+    try:
+        result = await remove_tenant_membership(
+            db,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+    except ValueError as exc:
+        raise _raise_for_service_error(exc) from exc
+
+    return TenantMembershipRemovalOut(**asdict(result))

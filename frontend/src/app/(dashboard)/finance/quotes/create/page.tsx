@@ -1,15 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "@/hooks/use-auth";
+import {
+    parseStrictDecimalAmountInput,
+    sanitizeStrictDecimalInput,
+    shouldBlockStrictDecimalKey,
+    TOTAL_AMOUNT_INVALID_MESSAGE,
+} from "@/components/finance/amount-utils";
 import { getCompanies } from "@/services/companies.service";
 import { getContacts } from "@/services/contacts.service";
-import { getDeals } from "@/services/deals.service";
+import { getDealById, getDeals } from "@/services/deals.service";
 import { getProducts } from "@/services/products.service";
 import { createQuote } from "@/services/quotes.service";
+import { getCurrentTenant } from "@/services/tenants.service";
 import type { Company, Contact, Deal } from "@/types/crm";
 import type { QuoteStatus } from "@/types/finance";
 import type { Product } from "@/types/product";
@@ -56,12 +63,15 @@ const QUOTE_STATUS_OPTIONS: Array<{ value: QuoteStatus; label: string }> = [
 export default function CreateQuotePage() {
     const auth = useAuth();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const submitLockRef = useRef(false);
+    const prefetchedDealId = searchParams.get("deal_id");
 
     const [companies, setCompanies] = useState<Company[]>([]);
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [deals, setDeals] = useState<Deal[]>([]);
     const [products, setProducts] = useState<Product[]>([]);
+    const [prefillDeal, setPrefillDeal] = useState<Deal | null>(null);
     const [form, setForm] = useState<QuoteFormState>(DEFAULT_FORM_STATE);
     const [formErrors, setFormErrors] = useState<QuoteFormErrors>({});
     const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -86,11 +96,15 @@ export default function CreateQuotePage() {
                 setIsLoading(true);
                 setLoadError("");
 
-                const [companiesResponse, contactsResponse, productsResponse] =
+                const [companiesResponse, contactsResponse, productsResponse, tenantResponse] =
                     await Promise.all([
                         getCompanies(),
                         getContacts(),
                         getProducts(),
+                        getCurrentTenant().catch((error) => {
+                            console.warn("Tenant defaults could not be loaded for quote create:", error);
+                            return null;
+                        }),
                     ]);
 
                 let dealsItems: Deal[] = [];
@@ -101,6 +115,20 @@ export default function CreateQuotePage() {
                     console.warn("Deals could not be loaded for quote create enrichment:", error);
                 }
 
+                let resolvedPrefillDeal: Deal | null = null;
+                if (prefetchedDealId) {
+                    resolvedPrefillDeal =
+                        dealsItems.find((deal) => deal.id === prefetchedDealId) ?? null;
+
+                    if (!resolvedPrefillDeal) {
+                        try {
+                            resolvedPrefillDeal = await getDealById(prefetchedDealId);
+                        } catch (error) {
+                            console.warn("Deal prefill could not be loaded for quote create:", error);
+                        }
+                    }
+                }
+
                 if (!isMounted) {
                     return;
                 }
@@ -109,6 +137,32 @@ export default function CreateQuotePage() {
                 setContacts(contactsResponse.items ?? []);
                 setDeals(dealsItems);
                 setProducts(productsResponse.items ?? []);
+                setPrefillDeal(resolvedPrefillDeal);
+
+                if (resolvedPrefillDeal) {
+                    const today = new Date().toISOString().slice(0, 10);
+                    const defaultExpiry = resolvedPrefillDeal.expected_close_date ?? today;
+                    setForm((current) => ({
+                        ...current,
+                        company_id: resolvedPrefillDeal.company_id,
+                        contact_id: resolvedPrefillDeal.contact_id ?? "",
+                        deal_id: resolvedPrefillDeal.id,
+                        product_id: resolvedPrefillDeal.product_id ?? "",
+                        issue_date: current.issue_date || today,
+                        expiry_date: current.expiry_date || defaultExpiry,
+                        currency: resolvedPrefillDeal.currency,
+                        total_amount: current.total_amount || resolvedPrefillDeal.amount,
+                        notes: current.notes || resolvedPrefillDeal.notes || "",
+                    }));
+                } else if (tenantResponse?.default_currency) {
+                    setForm((current) => ({
+                        ...current,
+                        currency:
+                            current.currency === DEFAULT_FORM_STATE.currency
+                                ? tenantResponse.default_currency || "USD"
+                                : current.currency,
+                    }));
+                }
             } catch (error) {
                 console.error("Failed to load quote create reference data:", error);
 
@@ -129,7 +183,7 @@ export default function CreateQuotePage() {
         return () => {
             isMounted = false;
         };
-    }, [auth.accessToken, auth.isAuthenticated, auth.isReady]);
+    }, [auth.accessToken, auth.isAuthenticated, auth.isReady, prefetchedDealId]);
 
     const filteredContacts = useMemo(() => {
         if (!form.company_id) {
@@ -162,8 +216,7 @@ export default function CreateQuotePage() {
     function validateForm(): QuoteFormErrors {
         const errors: QuoteFormErrors = {};
         const currency = form.currency.trim().toUpperCase();
-        const totalAmountRaw = form.total_amount.trim();
-        const totalAmount = Number(totalAmountRaw);
+        const totalAmountResult = parseStrictDecimalAmountInput(form.total_amount);
 
         if (!form.company_id) {
             errors.company_id = "Company is required.";
@@ -195,12 +248,8 @@ export default function CreateQuotePage() {
             errors.currency = "Currency must be exactly 3 characters (e.g. USD).";
         }
 
-        if (!totalAmountRaw) {
-            errors.total_amount = "Total amount is required.";
-        } else if (!Number.isFinite(totalAmount)) {
-            errors.total_amount = "Total amount must be a valid number.";
-        } else if (totalAmount < 0) {
-            errors.total_amount = "Total amount cannot be negative.";
+        if (totalAmountResult.error) {
+            errors.total_amount = totalAmountResult.error;
         }
 
         return errors;
@@ -221,24 +270,35 @@ export default function CreateQuotePage() {
             return;
         }
 
+        const totalAmountResult = parseStrictDecimalAmountInput(form.total_amount);
+        if (totalAmountResult.error || totalAmountResult.value === null) {
+            setFormErrors((current) => ({
+                ...current,
+                total_amount: totalAmountResult.error ?? TOTAL_AMOUNT_INVALID_MESSAGE,
+            }));
+            return;
+        }
+
         try {
             submitLockRef.current = true;
             setIsSubmitting(true);
 
-            await createQuote({
+            const createdQuote = await createQuote({
                 company_id: form.company_id,
                 contact_id: form.contact_id ? form.contact_id : null,
                 deal_id: form.deal_id ? form.deal_id : null,
+                source_deal_id: form.deal_id ? form.deal_id : null,
                 product_id: form.product_id ? form.product_id : null,
                 issue_date: form.issue_date,
                 expiry_date: form.expiry_date,
                 currency: form.currency.trim().toUpperCase(),
-                total_amount: Number(form.total_amount.trim()),
+                total_amount: totalAmountResult.value,
                 status: form.status,
                 notes: form.notes.trim() ? form.notes.trim() : null,
             });
 
-            router.push("/finance/quotes");
+            const redirectQuery = form.deal_id ? "?createdFrom=deal" : "?created=true";
+            router.push(`/finance/quotes/${createdQuote.id}${redirectQuery}`);
             router.refresh();
         } catch (error: unknown) {
             console.error("Failed to create quote:", error);
@@ -272,7 +332,7 @@ export default function CreateQuotePage() {
                     <div>
                         <h1 className="text-3xl font-bold text-slate-900">Create Quote</h1>
                         <p className="mt-2 text-sm text-slate-600">
-                            Create a quote or estimate linked to your existing CRM records.
+                            Create a quote or estimate linked to your existing CRM records and preserve deal context when you start from Sales.
                         </p>
                     </div>
 
@@ -303,6 +363,11 @@ export default function CreateQuotePage() {
                 </section>
             ) : (
                 <section className="max-w-2xl rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
+                    {prefillDeal ? (
+                        <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                            Creating this quote from deal <span className="font-semibold">{prefillDeal.name}</span>. Company, contact, amount, and product fields were prefilled from the existing deal context.
+                        </div>
+                    ) : null}
                     <form onSubmit={handleSubmit} noValidate className="space-y-4">
                         <div>
                             <label className="block text-sm font-medium text-slate-700">
@@ -508,17 +573,23 @@ export default function CreateQuotePage() {
                                 Total Amount
                             </label>
                             <input
-                                type="number"
+                                type="text"
+                                inputMode="decimal"
                                 step="0.01"
                                 placeholder="e.g. 1000.00"
                                 value={form.total_amount}
                                 onChange={(event) => {
                                     setForm((current) => ({
                                         ...current,
-                                        total_amount: event.target.value,
+                                        total_amount: sanitizeStrictDecimalInput(event.target.value),
                                     }));
                                     clearFieldError("total_amount");
                                     setSubmitError("");
+                                }}
+                                onKeyDown={(event) => {
+                                    if (shouldBlockStrictDecimalKey(event.key)) {
+                                        event.preventDefault();
+                                    }
                                 }}
                                 className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm ${
                                     formErrors.total_amount ? "border-red-500" : "border-slate-300"

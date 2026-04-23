@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
 
 from app.db import Base
 
 
 class Invoice(Base):
     __tablename__ = "invoices"
+    __table_args__ = (UniqueConstraint("tenant_id", "number", name="uq_invoices_tenant_number"),)
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id = Column(
@@ -18,7 +19,7 @@ class Invoice(Base):
         index=True,
     )
 
-    number = Column(String(50), nullable=False, unique=True, index=True)
+    number = Column(String(50), nullable=False, index=True)
 
     company_id = Column(
         String(36),
@@ -30,10 +31,28 @@ class Invoice(Base):
         ForeignKey("contacts.id", ondelete="RESTRICT"),
         nullable=True,
     )
+    source_quote_id = Column(
+        String(36),
+        ForeignKey("quotes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     product_id = Column(
         String(36),
         ForeignKey("products.id", ondelete="RESTRICT"),
         nullable=True,
+    )
+    subscription_id = Column(
+        String(36),
+        ForeignKey("commercial_subscriptions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    billing_cycle_id = Column(
+        String(36),
+        ForeignKey("commercial_billing_cycles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
     issue_date = Column(Date, nullable=False)

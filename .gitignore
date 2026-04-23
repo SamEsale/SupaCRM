@@ -8,6 +8,7 @@ __pycache__/
 venv/
 .env
 .env.*
+!.env.supa.example
 
 # VSCode
 .vscode/
@@ -29,3 +30,8 @@ node_modules/
 build/
 dist/
 *.egg-info/
+
+# local environments
+.venv/
+.local-storage/
+.codex/

@@ -1,8 +1,11 @@
-﻿import type { Contact } from "@/types/crm";
+import Link from "next/link";
+
+import type { Contact } from "@/types/crm";
 
 interface ContactsListProps {
     contacts: Contact[];
     total: number;
+    onDeleteContact?: (contact: Contact) => void;
 }
 
 function formatContactName(contact: Contact): string {
@@ -12,6 +15,7 @@ function formatContactName(contact: Contact): string {
 export default function ContactsList({
     contacts,
     total,
+    onDeleteContact,
 }: ContactsListProps) {
     return (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -41,6 +45,11 @@ export default function ContactsList({
                             <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
                                 Job Title
                             </th>
+                            {onDeleteContact ? (
+                                <th className="sticky right-0 z-10 bg-slate-50 px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                    Actions
+                                </th>
+                            ) : null}
                         </tr>
                     </thead>
 
@@ -48,7 +57,12 @@ export default function ContactsList({
                         {contacts.map((contact) => (
                             <tr key={contact.id}>
                                 <td className="px-6 py-4 text-sm font-medium text-slate-900">
-                                    {formatContactName(contact) || "-"}
+                                    <Link
+                                        href={`/contacts/${contact.id}`}
+                                        className="underline-offset-2 hover:underline"
+                                    >
+                                        {formatContactName(contact) || "-"}
+                                    </Link>
                                 </td>
                                 <td className="px-6 py-4 text-sm text-slate-700">
                                     {contact.email ?? "-"}
@@ -57,11 +71,39 @@ export default function ContactsList({
                                     {contact.phone ?? "-"}
                                 </td>
                                 <td className="px-6 py-4 text-sm text-slate-700">
-                                    {contact.company ?? "-"}
+                                    {contact.company_id ? (
+                                        <Link
+                                            href={`/companies/${contact.company_id}`}
+                                            className="underline-offset-2 hover:underline"
+                                        >
+                                            {contact.company ?? contact.company_id}
+                                        </Link>
+                                    ) : (
+                                        contact.company ?? "-"
+                                    )}
                                 </td>
                                 <td className="px-6 py-4 text-sm text-slate-700">
                                     {contact.job_title ?? "-"}
                                 </td>
+                                {onDeleteContact ? (
+                                    <td className="sticky right-0 z-10 border-l border-slate-200 bg-white px-6 py-4 text-sm shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)]">
+                                        <div className="flex flex-wrap gap-2">
+                                            <Link
+                                                href={`/contacts/${contact.id}/edit`}
+                                                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                                            >
+                                                Edit
+                                            </Link>
+                                            <button
+                                                type="button"
+                                                onClick={() => onDeleteContact(contact)}
+                                                className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-700"
+                                            >
+                                                Delete contact
+                                            </button>
+                                        </div>
+                                    </td>
+                                ) : null}
                             </tr>
                         ))}
                     </tbody>

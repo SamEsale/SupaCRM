@@ -13,13 +13,28 @@ export interface AuthUser {
 }
 
 export interface LoginRequest {
-    tenant_id: string;
+    tenant_id?: string | null;
     email: string;
     password: string;
 }
 
+export interface RegisterRequest {
+    company_name: string;
+    full_name?: string | null;
+    email: string;
+    password: string;
+    plan_code: string;
+    provider: string;
+    start_trial: boolean;
+}
+
 export interface RefreshTokenRequest {
     refresh_token: string;
+}
+
+export interface PasswordResetRequest {
+    tenant_id: string;
+    email: string;
 }
 
 export interface LogoutRequest {
@@ -30,9 +45,15 @@ export interface LogoutRequest {
 export interface TokenResponse {
     access_token: string;
     refresh_token: string;
+    tenant_id: string;
     token_type: string;
     access_token_expires_at: string;
     refresh_token_expires_at: string;
+}
+
+export interface RegisterResponse extends TokenResponse {
+    tenant_name: string;
+    commercial_status: import("@/types/commercial").TenantCommercialStatus;
 }
 
 export interface CurrentUserResponse {
@@ -49,6 +70,10 @@ export interface CurrentUserResponse {
 
 export interface LogoutResponse {
     success: boolean;
+}
+
+export interface PasswordResetResponse {
+    message: string;
 }
 
 export interface AuthState {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -9,7 +10,14 @@ from http import HTTPStatus
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit.service import AuditService
 from app.core.config import settings
+from app.core.security.auth_cache import (
+    auth_cache,
+    PROFILE_CACHE_MAX_TTL_SECONDS,
+    ttl_until_epoch,
+)
+from app.core.security import abuse as security_abuse
 from app.core.security.jwt import (
     TokenValidationError,
     decode_password_reset_token,
@@ -20,6 +28,9 @@ from app.core.security.jwt import (
 )
 from app.core.security.passwords import hash_password, validate_password_policy, verify_password
 from app.db import async_session_factory, set_tenant_guc
+from app.db_admin import AdminSessionLocal as admin_session_factory
+from app.workers.queue import enqueue_auth_cache_invalidation, enqueue_auth_cache_warmup
+from app.commercial.service import TenantCommercialStatus, get_tenant_commercial_status
 
 
 @dataclass(slots=True)
@@ -35,8 +46,11 @@ class UserProvisionResult:
 class TokenPairResult:
     access_token: str
     refresh_token: str
+    tenant_id: str
     access_token_expires_at: datetime
     refresh_token_expires_at: datetime
+    access_token_jti: str = ""
+    refresh_token_jti: str = ""
 
 
 @dataclass(slots=True)
@@ -52,6 +66,14 @@ class CurrentUserProfile:
     tenant_is_active: bool
 
 
+@dataclass(slots=True)
+class RegisterTenantResult:
+    token_pair: TokenPairResult
+    tenant_id: str
+    tenant_name: str
+    commercial_status: TenantCommercialStatus
+
+
 class AuthFlowError(Exception):
     def __init__(self, status_code: int, detail: str) -> None:
         super().__init__(detail)
@@ -64,6 +86,138 @@ def normalize_email(email: str) -> str:
     if not normalized:
         raise ValueError("Email is required")
     return normalized
+
+
+def _slugify_tenant_name(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", value.strip().lower())
+    normalized = normalized.strip("-")
+    return normalized[:48] or "workspace"
+
+
+def _build_principal_cache_snapshot(
+    *,
+    tenant_id: str,
+    user_id: str,
+    tenant_status: str,
+    tenant_is_active: bool,
+    user_is_active: bool,
+    membership_is_active: bool,
+) -> dict[str, object]:
+    return {
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "tenant_status": tenant_status,
+        "tenant_is_active": tenant_is_active,
+        "user_is_active": user_is_active,
+        "membership_is_active": membership_is_active,
+    }
+
+
+def _build_profile_cache_snapshot(
+    *,
+    tenant_id: str,
+    user_id: str,
+    email: str,
+    full_name: str | None,
+    roles: list[str],
+    is_owner: bool,
+    user_is_active: bool,
+    membership_is_active: bool,
+    tenant_is_active: bool,
+) -> dict[str, object]:
+    return {
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "email": email,
+        "full_name": full_name,
+        "roles": roles,
+        "is_owner": is_owner,
+        "user_is_active": user_is_active,
+        "membership_is_active": membership_is_active,
+        "tenant_is_active": tenant_is_active,
+    }
+
+
+async def _warm_auth_cache(
+    *,
+    principal_access_jti: str,
+    principal_access_expires_at: datetime,
+    tenant: dict,
+    identity: dict,
+    roles: list[str],
+    tenant_id: str,
+    user_id: str,
+    token_pair: TokenPairResult,
+    user_agent: str | None,
+) -> None:
+    principal_snapshot = _build_principal_cache_snapshot(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        tenant_status=str(tenant["status"]),
+        tenant_is_active=bool(tenant["is_active"]),
+        user_is_active=bool(identity["user_is_active"]),
+        membership_is_active=bool(identity["membership_is_active"]),
+    )
+    profile_snapshot = _build_profile_cache_snapshot(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        email=str(identity["email"]),
+        full_name=identity["full_name"],
+        roles=roles,
+        is_owner=bool(identity["is_owner"]),
+        user_is_active=bool(identity["user_is_active"]),
+        membership_is_active=bool(identity["membership_is_active"]),
+        tenant_is_active=bool(tenant["is_active"]),
+    )
+
+    await auth_cache.set_principal_snapshot(
+        principal_access_jti,
+        {
+            **principal_snapshot,
+            "access_token_jti": token_pair.access_token_jti,
+            "access_token_expires_at": principal_access_expires_at.isoformat(),
+        },
+        ttl_seconds=ttl_until_epoch(
+            int(principal_access_expires_at.timestamp()),
+            maximum_seconds=60,
+        ),
+    )
+    await auth_cache.set_profile_snapshot(
+        tenant_id,
+        user_id,
+        {
+            **profile_snapshot,
+            "access_token_jti": token_pair.access_token_jti,
+            "refresh_token_jti": token_pair.refresh_token_jti,
+            "user_agent": user_agent,
+        },
+        ttl_seconds=PROFILE_CACHE_MAX_TTL_SECONDS,
+    )
+    enqueue_auth_cache_warmup(
+        principal_snapshot={
+            "snapshot": {
+                **principal_snapshot,
+                "access_token_jti": principal_access_jti,
+                "access_token_expires_at": principal_access_expires_at.isoformat(),
+            },
+            "access_token_jti": principal_access_jti,
+            "principal_ttl_seconds": ttl_until_epoch(
+                int(principal_access_expires_at.timestamp()),
+                maximum_seconds=60,
+            ),
+        },
+        profile_snapshot={
+            "snapshot": {
+                **profile_snapshot,
+                "access_token_jti": token_pair.access_token_jti,
+                "refresh_token_jti": token_pair.refresh_token_jti,
+                "user_agent": user_agent,
+            },
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "profile_ttl_seconds": PROFILE_CACHE_MAX_TTL_SECONDS,
+        },
+    )
 
 
 async def ensure_user(
@@ -212,9 +366,100 @@ async def provision_user(
     )
 
 
+async def _tenant_id_exists(session: AsyncSession, tenant_id: str) -> bool:
+    result = await session.execute(
+        text(
+            """
+            select exists (
+                select 1
+                from public.tenants
+                where id = cast(:tenant_id as varchar)
+            ) as tenant_exists
+            """
+        ),
+        {"tenant_id": tenant_id},
+    )
+    return bool(result.scalar_one())
+
+
+async def _generate_available_tenant_id(session: AsyncSession, company_name: str) -> str:
+    base = _slugify_tenant_name(company_name)
+    candidate = base
+    suffix = 2
+
+    while await _tenant_id_exists(session, candidate):
+        candidate = f"{base[:40]}-{suffix}"
+        suffix += 1
+
+    return candidate
+
+
+async def register_tenant_admin(
+    *,
+    company_name: str,
+    full_name: str | None,
+    email: str,
+    password: str,
+    plan_code: str,
+    provider: str = "stripe",
+    start_trial: bool = True,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+    request_id: str | None = None,
+) -> RegisterTenantResult:
+    from app.tenants.service import bootstrap_tenant
+
+    tenant_name = company_name.strip()
+    if not tenant_name:
+        raise AuthFlowError(HTTPStatus.BAD_REQUEST, "Company name is required")
+
+    validate_password_policy(password)
+    normalized_email = normalize_email(email)
+
+    async with admin_session_factory() as admin_session:
+        tenant_id = await _generate_available_tenant_id(admin_session, tenant_name)
+
+        try:
+            async with admin_session.begin():
+                await bootstrap_tenant(
+                    admin_session,
+                    tenant_id=tenant_id,
+                    tenant_name=tenant_name,
+                    admin_email=normalized_email,
+                    admin_full_name=full_name,
+                    admin_password=password,
+                    plan_code=plan_code,
+                    provider=provider,
+                    start_trial=start_trial,
+                )
+        except ValueError as exc:
+            raise AuthFlowError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+
+        commercial_status = await get_tenant_commercial_status(
+            admin_session,
+            tenant_id=tenant_id,
+        )
+
+    token_pair = await login_user(
+        tenant_id=tenant_id,
+        email=normalized_email,
+        password=password,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        request_id=request_id,
+    )
+
+    return RegisterTenantResult(
+        token_pair=token_pair,
+        tenant_id=tenant_id,
+        tenant_name=tenant_name,
+        commercial_status=commercial_status,
+    )
+
+
 async def login_user(
     *,
-    tenant_id: str,
+    tenant_id: str | None,
     email: str,
     password: str,
     ip_address: str | None = None,
@@ -222,15 +467,19 @@ async def login_user(
     request_id: str | None = None,
 ) -> TokenPairResult:
     normalized_email = normalize_email(email)
+    resolved_tenant_id = await _resolve_login_tenant_id(
+        tenant_id=tenant_id,
+        email=normalized_email,
+    )
 
     async with async_session_factory() as session:
         try:
-            await set_tenant_guc(session, tenant_id)
-            tenant = await _get_tenant_state(session, tenant_id)
+            await set_tenant_guc(session, resolved_tenant_id)
+            tenant = await _get_tenant_state(session, resolved_tenant_id)
             if not tenant:
                 await session.rollback()
                 await _write_audit_log(
-                    tenant_id=tenant_id,
+                    tenant_id=resolved_tenant_id,
                     action="auth.login.failed",
                     actor_ip=ip_address,
                     request_id=request_id,
@@ -245,7 +494,7 @@ async def login_user(
             if tenant_status != "active":
                 await session.rollback()
                 await _write_audit_log(
-                    tenant_id=tenant_id,
+                    tenant_id=resolved_tenant_id,
                     action="auth.login.blocked",
                     actor_ip=ip_address,
                     request_id=request_id,
@@ -263,11 +512,22 @@ async def login_user(
                     "Tenant is not active. Access has been blocked.",
                 )
 
-            identity = await _get_identity_by_email(session, tenant_id, normalized_email)
+            identity = await _get_identity_by_email(session, resolved_tenant_id, normalized_email)
             if not identity:
                 await session.rollback()
+                security_abuse.emit_security_event(
+                    "auth.login.failed",
+                    severity="warning",
+                    request_id=request_id,
+                    tenant_id=resolved_tenant_id,
+                    user_id=None,
+                    ip_address=ip_address,
+                    reason="user_not_found",
+                    email=normalized_email,
+                    scope=f"{resolved_tenant_id}:{normalized_email}:{ip_address or 'unknown'}",
+                )
                 await _write_audit_log(
-                    tenant_id=tenant_id,
+                    tenant_id=resolved_tenant_id,
                     action="auth.login.failed",
                     actor_ip=ip_address,
                     request_id=request_id,
@@ -287,8 +547,19 @@ async def login_user(
                 or not credentials["password_hash"]
             ):
                 await session.rollback()
+                security_abuse.emit_security_event(
+                    "auth.login.failed",
+                    severity="warning",
+                    request_id=request_id,
+                    tenant_id=resolved_tenant_id,
+                    user_id=identity["user_id"],
+                    ip_address=ip_address,
+                    reason="account_inactive_or_password_unavailable",
+                    email=normalized_email,
+                    scope=f"{resolved_tenant_id}:{identity['user_id']}:{ip_address or 'unknown'}",
+                )
                 await _write_audit_log(
-                    tenant_id=tenant_id,
+                    tenant_id=resolved_tenant_id,
                     action="auth.login.failed",
                     actor_user_id=identity["user_id"],
                     actor_ip=ip_address,
@@ -305,8 +576,19 @@ async def login_user(
             locked_until = credentials["locked_until"]
             if locked_until and locked_until > now:
                 await session.rollback()
+                security_abuse.emit_security_event(
+                    "auth.login.locked",
+                    severity="error",
+                    request_id=request_id,
+                    tenant_id=resolved_tenant_id,
+                    user_id=identity["user_id"],
+                    ip_address=ip_address,
+                    reason="account_locked",
+                    locked_until=locked_until.isoformat(),
+                    scope=f"{resolved_tenant_id}:{identity['user_id']}:{ip_address or 'unknown'}",
+                )
                 await _write_audit_log(
-                    tenant_id=tenant_id,
+                    tenant_id=resolved_tenant_id,
                     action="auth.login.failed",
                     actor_user_id=identity["user_id"],
                     actor_ip=ip_address,
@@ -320,10 +602,40 @@ async def login_user(
                 raise AuthFlowError(HTTPStatus.UNAUTHORIZED, "Invalid credentials")
 
             if not verify_password(str(credentials["password_hash"]), password):
-                await _record_failed_login(session, identity["user_id"], credentials, now=now)
+                failed_attempts, new_locked_until = await _record_failed_login(
+                    session,
+                    identity["user_id"],
+                    credentials,
+                    now=now,
+                )
                 await session.commit()
+                await security_abuse.auth_abuse_tracker.record(
+                    event_type="auth.login.failed",
+                    scope_key=f"{resolved_tenant_id}:{identity['user_id']}:{ip_address or 'unknown'}",
+                    tenant_id=resolved_tenant_id,
+                    user_id=identity["user_id"],
+                    ip_address=ip_address,
+                    reason="invalid_password",
+                    email=normalized_email,
+                    attempt_count=failed_attempts,
+                    lockout_until=new_locked_until.isoformat() if new_locked_until else None,
+                    severity="warning",
+                )
+                security_abuse.emit_security_event(
+                    "auth.login.failed",
+                    severity="warning",
+                    request_id=request_id,
+                    tenant_id=resolved_tenant_id,
+                    user_id=identity["user_id"],
+                    ip_address=ip_address,
+                    reason="invalid_password",
+                    email=normalized_email,
+                    attempt_count=failed_attempts,
+                    lockout_until=new_locked_until.isoformat() if new_locked_until else None,
+                    scope=f"{resolved_tenant_id}:{identity['user_id']}:{ip_address or 'unknown'}",
+                )
                 await _write_audit_log(
-                    tenant_id=tenant_id,
+                    tenant_id=resolved_tenant_id,
                     action="auth.login.failed",
                     actor_user_id=identity["user_id"],
                     actor_ip=ip_address,
@@ -336,11 +648,11 @@ async def login_user(
                 )
                 raise AuthFlowError(HTTPStatus.UNAUTHORIZED, "Invalid credentials")
 
-            roles = await _get_role_names(session, tenant_id, identity["user_id"])
+            roles = await _get_role_names(session, resolved_tenant_id, identity["user_id"])
             token_pair = await _issue_token_pair(
                 session,
                 user_id=identity["user_id"],
-                tenant_id=tenant_id,
+                tenant_id=resolved_tenant_id,
                 roles=roles,
                 token_version=int(credentials["refresh_token_version"]),
                 user_agent=user_agent,
@@ -349,8 +661,20 @@ async def login_user(
             await _reset_login_state(session, identity["user_id"], now=now)
             await session.commit()
 
+            await _warm_auth_cache(
+                principal_access_jti=token_pair.access_token_jti,
+                principal_access_expires_at=token_pair.access_token_expires_at,
+                tenant=tenant,
+                identity=identity,
+                roles=roles,
+                tenant_id=resolved_tenant_id,
+                user_id=identity["user_id"],
+                token_pair=token_pair,
+                user_agent=user_agent,
+            )
+
             await _write_audit_log(
-                tenant_id=tenant_id,
+                tenant_id=resolved_tenant_id,
                 action="auth.login.succeeded",
                 actor_user_id=identity["user_id"],
                 actor_ip=ip_address,
@@ -480,6 +804,18 @@ async def refresh_user_tokens(
             )
             await session.commit()
 
+            await _warm_auth_cache(
+                principal_access_jti=token_pair.access_token_jti,
+                principal_access_expires_at=token_pair.access_token_expires_at,
+                tenant=tenant,
+                identity=identity,
+                roles=roles,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                token_pair=token_pair,
+                user_agent=user_agent,
+            )
+
             await _write_audit_log(
                 tenant_id=tenant_id,
                 action="auth.refresh.succeeded",
@@ -501,9 +837,11 @@ async def refresh_user_tokens(
 
 
 async def logout_user(
+    db: AsyncSession,
     *,
     principal_user_id: str,
     principal_tenant_id: str,
+    principal_access_jti: str | None = None,
     refresh_token: str,
     revoke_family: bool,
     ip_address: str | None = None,
@@ -523,50 +861,50 @@ async def logout_user(
     if token_user_id != str(principal_user_id) or token_tenant_id != str(principal_tenant_id):
         raise AuthFlowError(HTTPStatus.UNAUTHORIZED, "Refresh token does not match the authenticated user")
 
-    async with async_session_factory() as session:
-        try:
-            await set_tenant_guc(session, token_tenant_id)
-            refresh_row = await _get_refresh_token_record(session, token_id)
-            if not refresh_row or str(refresh_row["token_hash"]) != _hash_token(refresh_token):
-                await session.rollback()
-                raise AuthFlowError(HTTPStatus.UNAUTHORIZED, "Invalid refresh token")
+    refresh_row = await _get_refresh_token_record(db, token_id)
+    if not refresh_row or str(refresh_row["token_hash"]) != _hash_token(refresh_token):
+        raise AuthFlowError(HTTPStatus.UNAUTHORIZED, "Invalid refresh token")
 
-            now = _utcnow()
-            if revoke_family:
-                await _revoke_refresh_family(
-                    session,
-                    tenant_id=token_tenant_id,
-                    family_id=family_id,
-                    reason="logout_family_revocation",
-                    now=now,
-                )
-            else:
-                await _revoke_refresh_token(
-                    session,
-                    tenant_id=token_tenant_id,
-                    token_id=token_id,
-                    reason="logout",
-                    now=now,
-                )
-            await session.commit()
+    now = _utcnow()
+    if revoke_family:
+        await _revoke_refresh_family(
+            db,
+            tenant_id=token_tenant_id,
+            family_id=family_id,
+            reason="logout_family_revocation",
+            now=now,
+        )
+    else:
+        await _revoke_refresh_token(
+            db,
+            tenant_id=token_tenant_id,
+            token_id=token_id,
+            reason="logout",
+            now=now,
+        )
 
-            await _write_audit_log(
-                tenant_id=token_tenant_id,
-                action="auth.logout.succeeded",
-                actor_user_id=token_user_id,
-                actor_ip=ip_address,
-                request_id=request_id,
-                resource="auth",
-                resource_id=token_user_id,
-                status_code=HTTPStatus.OK,
-                message="Logout succeeded",
-                meta={"family_revoked": revoke_family, "user_agent": user_agent},
-            )
-        except AuthFlowError:
-            raise
-        except Exception:
-            await session.rollback()
-            raise
+    await AuditService.log(
+        db=db,
+        tenant_id=token_tenant_id,
+        action="auth.logout.succeeded",
+        actor_user_id=token_user_id,
+        actor_ip=ip_address,
+        request_id=request_id,
+        resource="auth",
+        resource_id=token_user_id,
+        status_code=HTTPStatus.OK,
+        message="Logout succeeded",
+        meta={"family_revoked": revoke_family, "user_agent": user_agent},
+    )
+
+    if principal_access_jti:
+        await auth_cache.invalidate_principal_snapshot(principal_access_jti)
+    await auth_cache.invalidate_profile_snapshot(token_tenant_id, token_user_id)
+    enqueue_auth_cache_invalidation(
+        principal_access_jti=principal_access_jti,
+        tenant_id=token_tenant_id,
+        user_id=token_user_id,
+    )
 
 
 async def initiate_password_reset(
@@ -718,6 +1056,9 @@ async def complete_password_reset(
             )
             await session.commit()
 
+            await auth_cache.invalidate_profile_snapshot(tenant_id, user_id)
+            enqueue_auth_cache_invalidation(tenant_id=tenant_id, user_id=user_id)
+
             await _write_audit_log(
                 tenant_id=tenant_id,
                 action="auth.password.changed",
@@ -738,35 +1079,60 @@ async def complete_password_reset(
 
 
 async def get_current_user_profile(
+    db: AsyncSession,
     *,
     tenant_id: str,
     user_id: str,
 ) -> CurrentUserProfile:
-    async with async_session_factory() as session:
-        try:
-            await set_tenant_guc(session, tenant_id)
-            tenant = await _get_tenant_state(session, tenant_id)
-            identity = await _get_identity_by_user_id(session, tenant_id, user_id)
-            if not tenant or not identity:
-                raise AuthFlowError(HTTPStatus.UNAUTHORIZED, "Authenticated user is no longer available")
+    cached_profile = await auth_cache.get_profile_snapshot(tenant_id, user_id)
+    if cached_profile:
+        return CurrentUserProfile(
+            user_id=str(cached_profile["user_id"]),
+            tenant_id=str(cached_profile["tenant_id"]),
+            email=str(cached_profile["email"]),
+            full_name=cached_profile.get("full_name"),
+            roles=[str(role) for role in cached_profile.get("roles", [])],
+            is_owner=bool(cached_profile["is_owner"]),
+            user_is_active=bool(cached_profile["user_is_active"]),
+            membership_is_active=bool(cached_profile["membership_is_active"]),
+            tenant_is_active=bool(cached_profile["tenant_is_active"]),
+        )
 
-            roles = await _get_role_names(session, tenant_id, user_id)
-            return CurrentUserProfile(
-                user_id=user_id,
-                tenant_id=tenant_id,
-                email=str(identity["email"]),
-                full_name=identity["full_name"],
-                roles=roles,
-                is_owner=bool(identity["is_owner"]),
-                user_is_active=bool(identity["user_is_active"]),
-                membership_is_active=bool(identity["membership_is_active"]),
-                tenant_is_active=bool(tenant["is_active"]),
-            )
-        except AuthFlowError:
-            raise
-        except Exception:
-            await session.rollback()
-            raise
+    tenant = await _get_tenant_state(db, tenant_id)
+    identity = await _get_identity_by_user_id(db, tenant_id, user_id)
+    if not tenant or not identity:
+        raise AuthFlowError(HTTPStatus.UNAUTHORIZED, "Authenticated user is no longer available")
+
+    roles = await _get_role_names(db, tenant_id, user_id)
+    profile = CurrentUserProfile(
+        user_id=user_id,
+        tenant_id=tenant_id,
+        email=str(identity["email"]),
+        full_name=identity["full_name"],
+        roles=roles,
+        is_owner=bool(identity["is_owner"]),
+        user_is_active=bool(identity["user_is_active"]),
+        membership_is_active=bool(identity["membership_is_active"]),
+        tenant_is_active=bool(tenant["is_active"]),
+    )
+
+    await auth_cache.set_profile_snapshot(
+        tenant_id,
+        user_id,
+        {
+            "user_id": profile.user_id,
+            "tenant_id": profile.tenant_id,
+            "email": profile.email,
+            "full_name": profile.full_name,
+            "roles": profile.roles,
+            "is_owner": profile.is_owner,
+            "user_is_active": profile.user_is_active,
+            "membership_is_active": profile.membership_is_active,
+            "tenant_is_active": profile.tenant_is_active,
+        },
+        ttl_seconds=PROFILE_CACHE_MAX_TTL_SECONDS,
+    )
+    return profile
 
 
 async def _issue_token_pair(
@@ -851,9 +1217,50 @@ async def _issue_token_pair(
     return TokenPairResult(
         access_token=access_token.token,
         refresh_token=refresh_token.token,
+        tenant_id=tenant_id,
         access_token_expires_at=access_token.expires_at,
         refresh_token_expires_at=refresh_token.expires_at,
+        access_token_jti=access_token.jti,
+        refresh_token_jti=refresh_token.jti,
     )
+
+
+async def _resolve_login_tenant_id(*, tenant_id: str | None, email: str) -> str:
+    normalized_tenant_id = tenant_id.strip() if isinstance(tenant_id, str) else ""
+    if normalized_tenant_id:
+        return normalized_tenant_id
+
+    if settings.ENV.strip().lower() == "prod":
+        raise AuthFlowError(HTTPStatus.BAD_REQUEST, "Tenant ID is required")
+
+    async with admin_session_factory() as admin_session:
+        result = await admin_session.execute(
+            text(
+                """
+                select distinct tu.tenant_id
+                from public.tenant_users tu
+                join public.users u
+                  on u.id = tu.user_id
+                join public.tenants t
+                  on t.id = tu.tenant_id
+                where lower(u.email) = cast(:email as varchar)
+                  and u.is_active = true
+                  and tu.is_active = true
+                  and t.is_active = true
+                  and t.status = 'active'
+                order by tu.tenant_id
+                """
+            ),
+            {"email": email},
+        )
+        tenant_ids = [str(row["tenant_id"]) for row in result.mappings().all()]
+
+    if len(tenant_ids) == 1:
+        return tenant_ids[0]
+    if len(tenant_ids) > 1:
+        raise AuthFlowError(HTTPStatus.BAD_REQUEST, "Tenant ID is required for this account")
+
+    raise AuthFlowError(HTTPStatus.UNAUTHORIZED, "Invalid credentials")
 
 
 async def _record_failed_login(
@@ -862,7 +1269,7 @@ async def _record_failed_login(
     credentials: dict,
     *,
     now: datetime,
-) -> None:
+) -> tuple[int, datetime | None]:
     failed_attempts = int(credentials["failed_login_attempts"]) + 1
     locked_until = credentials["locked_until"]
     if (not locked_until or locked_until <= now) and failed_attempts >= settings.AUTH_MAX_FAILED_ATTEMPTS:
@@ -886,6 +1293,7 @@ async def _record_failed_login(
             "last_failed_login_at": now,
         },
     )
+    return failed_attempts, locked_until
 
 
 async def _reset_login_state(

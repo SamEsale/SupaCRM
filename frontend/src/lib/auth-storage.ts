@@ -6,8 +6,18 @@ import {
 } from "@/constants/auth";
 import type { AuthState, AuthUser } from "@/types/auth";
 
+export const AUTH_STORAGE_CHANGE_EVENT = "supacrm:auth-storage-changed";
+
 function isBrowser(): boolean {
     return typeof window !== "undefined";
+}
+
+function notifyAuthStorageChanged(): void {
+    if (!isBrowser()) {
+        return;
+    }
+
+    window.dispatchEvent(new Event(AUTH_STORAGE_CHANGE_EVENT));
 }
 
 export function getAccessToken(): string | null {
@@ -29,6 +39,11 @@ export function getRefreshToken(): string | null {
 export function getTenantId(): string | null {
     if (!isBrowser()) {
         return null;
+    }
+
+    const storedUser = getStoredUser();
+    if (storedUser?.tenant_id) {
+        return storedUser.tenant_id;
     }
 
     return window.localStorage.getItem(TENANT_ID_KEY);
@@ -88,6 +103,33 @@ export function setAuthStorage(
     setTokenStorage(accessToken, refreshToken);
     setTenantId(user.tenant_id);
     setStoredUser(user);
+    notifyAuthStorageChanged();
+}
+
+export function updateAuthTokens(
+    accessToken: string,
+    refreshToken: string,
+): void {
+    setTokenStorage(accessToken, refreshToken);
+    notifyAuthStorageChanged();
+}
+
+export function subscribeAuthStorage(listener: () => void): () => void {
+    if (!isBrowser()) {
+        return () => undefined;
+    }
+
+    const handleChange = (): void => {
+        listener();
+    };
+
+    window.addEventListener(AUTH_STORAGE_CHANGE_EVENT, handleChange);
+    window.addEventListener("storage", handleChange);
+
+    return () => {
+        window.removeEventListener(AUTH_STORAGE_CHANGE_EVENT, handleChange);
+        window.removeEventListener("storage", handleChange);
+    };
 }
 
 export function clearAuthStorage(): void {
@@ -99,6 +141,7 @@ export function clearAuthStorage(): void {
     window.localStorage.removeItem(REFRESH_TOKEN_KEY);
     window.localStorage.removeItem(AUTH_USER_KEY);
     window.localStorage.removeItem(TENANT_ID_KEY);
+    notifyAuthStorageChanged();
 }
 
 export function getAuthStateFromStorage(): AuthState {

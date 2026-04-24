@@ -67,7 +67,7 @@ export const sidebarMenu: SidebarMenuSection[] = [
             { title: "Gateway Settings", disabled: true },
             { title: "Integrations", disabled: true },
             { title: "Transactions", disabled: true },
-            { title: "Subscription Billing", disabled: true },
+            { title: "Subscription Billing", href: "/finance/payments/subscription-billing" },
         ],
     },
     {

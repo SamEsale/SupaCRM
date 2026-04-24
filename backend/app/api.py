@@ -9,11 +9,14 @@ from fastapi import APIRouter, Depends
 from app.audit.routes import router as audit_router
 from app.auth.routes import router as auth_router
 from app.catalog.routes import router as catalog_router
+from app.commercial.routes import router as commercial_router
+from app.commercial.routes import webhook_router as commercial_webhook_router
 from app.core.security.deps import require_active_tenant
 from app.crm.routes import router as crm_router
 from app.debug.routes import router as debug_router
 from app.internal.bootstrap_routes import router as internal_bootstrap_router
 from app.invoicing.routes import router as invoicing_router
+from app.payments.routes import router as payments_router
 from app.quotes.routes import router as quotes_router
 from app.reporting.routes import router as reporting_router
 from app.sales.routes import router as sales_router
@@ -32,6 +35,9 @@ async def health():
 api_router.include_router(auth_router)
 api_router.include_router(debug_router)
 api_router.include_router(internal_bootstrap_router)
+api_router.include_router(commercial_router)
+api_router.include_router(commercial_webhook_router)
+api_router.include_router(payments_router)
 
 # Protected tenant-facing routers
 protected_router = APIRouter(

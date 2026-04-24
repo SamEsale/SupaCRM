@@ -1,3 +1,0 @@
-model = "qwen3.5:397b-cloud"
-model_provider = "ollama"
-model_reasoning_effort = "high"

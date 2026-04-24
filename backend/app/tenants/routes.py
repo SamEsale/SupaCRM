@@ -26,7 +26,9 @@ from app.tenants.service import (
     list_tenant_roles,
     list_tenant_users,
     provision_tenant_user,
+    remove_tenant_membership,
     update_tenant_details,
+    update_tenant_membership,
     update_tenant_status,
 )
 
@@ -222,3 +224,119 @@ async def assign_roles_for_tenant_user(
             assignment.role_name for assignment in result.role_assignments if assignment.created_assignment
         ],
     )
+
+
+@router.patch(
+    "/me/users/{user_id}",
+    response_model=TenantUserOut,
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
+)
+async def update_tenant_user(
+    user_id: str,
+    payload: dict,
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> TenantUserOut:
+    """Update a user's details (full_name, is_active)."""
+    from app.tenants.schemas import TenantUserOut as SchemaOut
+    from sqlalchemy import text
+
+    full_name = payload.get("full_name")
+    is_active = payload.get("is_active")
+
+    if full_name is not None:
+        await db.execute(
+            text(
+                """
+                update public.users
+                set full_name = :full_name, updated_at = now()
+                where id = :user_id
+                """
+            ),
+            {"user_id": user_id, "full_name": full_name.strip() if full_name else None},
+        )
+
+    if is_active is not None:
+        await db.execute(
+            text(
+                """
+                update public.users
+                set is_active = :is_active, updated_at = now()
+                where id = :user_id
+                """
+            ),
+            {"user_id": user_id, "is_active": is_active},
+        )
+
+    users = await list_tenant_users(db, tenant_id=tenant_id)
+    target = next((u for u in users if u.user_id == user_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found in tenant")
+
+    return SchemaOut(
+        user_id=target.user_id,
+        email=target.email,
+        full_name=target.full_name,
+        user_is_active=target.user_is_active,
+        membership_is_active=target.membership_is_active,
+        is_owner=target.is_owner,
+        role_names=target.role_names,
+        membership_created_at=target.membership_created_at,
+    )
+
+
+@router.delete(
+    "/me/users/{user_id}",
+    response_model=dict,
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
+)
+async def delete_tenant_user(
+    user_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> dict:
+    """Remove a user from the tenant (membership removal, not user deletion)."""
+    try:
+        result = await remove_tenant_membership(db, tenant_id=tenant_id, user_id=user_id)
+    except ValueError as exc:
+        raise _raise_for_service_error(exc) from exc
+
+    return {"success": result.removed, "user_id": user_id, "tenant_id": tenant_id}
+
+
+@router.patch(
+    "/me/users/{user_id}/membership",
+    response_model=dict,
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
+)
+async def update_user_membership(
+    user_id: str,
+    payload: dict,
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> dict:
+    """Update membership status (activate/deactivate, owner status, ownership transfer)."""
+    membership_is_active = payload.get("membership_is_active")
+    is_owner = payload.get("is_owner")
+    transfer_owner_from_user_id = payload.get("transfer_owner_from_user_id")
+
+    try:
+        result = await update_tenant_membership(
+            db,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            membership_is_active=membership_is_active,
+            is_owner=is_owner,
+            transfer_owner_from_user_id=transfer_owner_from_user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "success": True,
+        "user_id": result.user_id,
+        "tenant_id": result.tenant_id,
+        "membership_is_active": result.membership_is_active,
+        "is_owner": result.is_owner,
+        "transferred_owner_from_user_id": result.transferred_owner_from_user_id,
+    }

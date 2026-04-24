@@ -28,4 +28,4 @@ node_modules/
 # Python build
 build/
 dist/
-*.egg-info/.codex/config*.toml
+.codex/config*.toml

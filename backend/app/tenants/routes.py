@@ -45,6 +45,13 @@ def _raise_for_service_error(exc: ValueError) -> HTTPException:
     return HTTPException(status_code=status_code, detail=detail)
 
 
+def _raise_for_tenant_update_error(exc: ValueError) -> HTTPException:
+    detail = str(exc)
+    if detail.startswith("Tenant does not exist"):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
 @router.get(
     "/me",
     response_model=TenantOut,
@@ -75,9 +82,24 @@ async def update_current_tenant(
             db,
             tenant_id=tenant_id,
             name=payload.name.strip(),
+            legal_name=payload.legal_name,
+            address_line_1=payload.address_line_1,
+            address_line_2=payload.address_line_2,
+            city=payload.city,
+            state_region=payload.state_region,
+            postal_code=payload.postal_code,
+            country=payload.country,
+            vat_number=payload.vat_number,
+            default_currency=payload.default_currency,
+            secondary_currency=payload.secondary_currency,
+            secondary_currency_rate=payload.secondary_currency_rate,
+            brand_primary_color=payload.brand_primary_color,
+            brand_secondary_color=payload.brand_secondary_color,
+            sidebar_background_color=payload.sidebar_background_color,
+            sidebar_text_color=payload.sidebar_text_color,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise _raise_for_tenant_update_error(exc) from exc
     return TenantOut(**asdict(tenant))
 
 

@@ -12,13 +12,11 @@ import {
 } from "@/lib/auth-storage";
 
 interface LoginFormState {
-    tenantId: string;
     email: string;
     password: string;
 }
 
 const initialState: LoginFormState = {
-    tenantId: "",
     email: "",
     password: "",
 };
@@ -68,22 +66,19 @@ export default function LoginForm() {
         setIsSubmitting(true);
 
         try {
-            const normalizedTenantId = form.tenantId.trim();
-
             const tokenResponse = await login({
-                tenant_id: normalizedTenantId,
                 email: form.email.trim(),
                 password: form.password,
             });
 
-            setTenantId(normalizedTenantId);
+            setTenantId(tokenResponse.tenant_id);
 
             setTokenStorage(
                 tokenResponse.access_token,
                 tokenResponse.refresh_token,
             );
 
-            const currentUser = await getCurrentUser(normalizedTenantId);
+            const currentUser = await getCurrentUser(tokenResponse.tenant_id);
 
             setAuthStorage(
                 tokenResponse.access_token,
@@ -105,30 +100,10 @@ export default function LoginForm() {
             <h1 className="text-2xl font-bold text-slate-900">Login</h1>
 
             <p className="mt-2 text-sm text-slate-600">
-                Sign in to SupaCRM with your username, email, and password.
+                Sign in to SupaCRM with your email and password.
             </p>
 
             <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
-                <div>
-                    <label
-                        htmlFor="tenantId"
-                        className="mb-1 block text-sm font-medium text-slate-700"
-                    >
-                        Username
-                    </label>
-                    <input
-                        id="tenantId"
-                        name="tenantId"
-                        type="text"
-                        value={form.tenantId}
-                        onChange={handleChange}
-                        placeholder="Enter username"
-                        autoComplete="username"
-                        required
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                    />
-                </div>
-
                 <div>
                     <label
                         htmlFor="email"
@@ -142,7 +117,7 @@ export default function LoginForm() {
                         type="email"
                         value={form.email}
                         onChange={handleChange}
-                        placeholder="Enter email"
+                        placeholder="Enter your email"
                         autoComplete="email"
                         required
                         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"

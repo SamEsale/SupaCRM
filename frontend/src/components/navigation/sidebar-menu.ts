@@ -71,6 +71,14 @@ export const sidebarMenu: SidebarMenuSection[] = [
         ],
     },
     {
+        title: "Settings",
+        items: [
+            { title: "Overview", href: "/settings" },
+            { title: "Company Settings", href: "/settings/company" },
+            { title: "Branding", href: "/settings/branding" },
+        ],
+    },
+    {
         title: "Reports",
         items: [
             { title: "Sales Reports", disabled: true },

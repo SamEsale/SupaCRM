@@ -13,7 +13,6 @@ export interface AuthUser {
 }
 
 export interface LoginRequest {
-    tenant_id?: string | null;
     email: string;
     password: string;
 }

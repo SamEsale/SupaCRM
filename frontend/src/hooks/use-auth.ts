@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
     getAuthStateFromStorage,
     getTenantId,
     setTenantId,
+    subscribeAuthStorage,
 } from "@/lib/auth-storage";
 import type { AuthState } from "@/types/auth";
 
@@ -31,8 +32,19 @@ function readAuthState(): AuthState {
 }
 
 export function useAuth(): UseAuthResult {
-    const [authState] = useState<AuthState>(() => readAuthState() ?? initialAuthState);
-    const isReady = true;
+    const [authState, setAuthState] = useState<AuthState>(initialAuthState);
+    const [isReady, setIsReady] = useState(false);
+
+    useEffect(() => {
+        function syncAuthState(): void {
+            setAuthState(readAuthState());
+            setIsReady(true);
+        }
+
+        syncAuthState();
+
+        return subscribeAuthStorage(syncAuthState);
+    }, []);
 
     return {
         ...authState,

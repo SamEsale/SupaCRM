@@ -9,6 +9,8 @@ type DealsListProps = {
     companies: Company[];
     contacts: Contact[];
     products: Product[];
+    title?: string;
+    description?: string;
 };
 
 function formatLabel(value: string): string {
@@ -67,11 +69,13 @@ export default function DealsList({
     companies,
     contacts,
     products,
+    title = "Deals",
+    description = "loaded from the backend API.",
 }: DealsListProps) {
     if (deals.length === 0) {
         return (
             <section className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-                <h2 className="text-2xl font-semibold text-slate-900">Deals</h2>
+                <h2 className="text-2xl font-semibold text-slate-900">{title}</h2>
                 <p className="mt-2 text-sm text-slate-600">
                     Your tenant does not have any deals yet.
                 </p>
@@ -81,9 +85,9 @@ export default function DealsList({
 
     return (
         <section className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-            <h2 className="text-2xl font-semibold text-slate-900">Deals</h2>
+            <h2 className="text-2xl font-semibold text-slate-900">{title}</h2>
             <p className="mt-2 text-sm text-slate-600">
-                {total} deal{total === 1 ? "" : "s"} loaded from the backend API.
+                {total} deal{total === 1 ? "" : "s"} {description}
             </p>
 
             <div className="mt-6 overflow-x-auto rounded-lg border border-slate-200">

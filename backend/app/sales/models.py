@@ -45,6 +45,9 @@ class Deal(Base):
 
     expected_close_date = Column(Date, nullable=True)
     notes = Column(Text, nullable=True)
+    next_follow_up_at = Column(DateTime(timezone=True), nullable=True)
+    follow_up_note = Column(Text, nullable=True)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(

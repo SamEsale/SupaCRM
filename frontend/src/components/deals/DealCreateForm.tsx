@@ -1,16 +1,34 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import {
+    parseStrictDecimalAmountInput,
+    sanitizeStrictDecimalInput,
+    shouldBlockStrictDecimalKey,
+    TOTAL_AMOUNT_INVALID_MESSAGE,
+} from "@/components/finance/amount-utils";
+import { DEAL_STAGES, DEAL_STATUSES, formatDealLabel } from "@/lib/deals";
 import { createDeal } from "@/services/deals.service";
 import type { Company, Contact, DealCreateRequest } from "@/types/crm";
 import type { Product } from "@/types/product";
+
+type DealFormMode = "create" | "edit";
 
 type DealCreateFormProps = {
     companies: Company[];
     contacts: Contact[];
     products: Product[];
-    onCreated: () => Promise<void> | void;
+    onCreated?: () => Promise<void> | void;
+    onSuccess?: () => Promise<void> | void;
+    onSubmit?: (payload: DealCreateRequest) => Promise<void>;
+    initialValues?: Partial<DealCreateRequest>;
+    mode?: DealFormMode;
+    title?: string;
+    description?: string;
+    submitLabel?: string;
+    submittingLabel?: string;
+    successMessage?: string;
 };
 
 const DEFAULT_FORM_STATE: DealCreateRequest = {
@@ -26,16 +44,77 @@ const DEFAULT_FORM_STATE: DealCreateRequest = {
     notes: null,
 };
 
+function buildInitialFormState(
+    initialValues?: Partial<DealCreateRequest>,
+): DealCreateRequest {
+    return {
+        ...DEFAULT_FORM_STATE,
+        ...initialValues,
+        name: initialValues?.name ?? DEFAULT_FORM_STATE.name,
+        company_id: initialValues?.company_id ?? DEFAULT_FORM_STATE.company_id,
+        contact_id: initialValues?.contact_id ?? DEFAULT_FORM_STATE.contact_id,
+        product_id: initialValues?.product_id ?? DEFAULT_FORM_STATE.product_id,
+        amount: initialValues?.amount ?? DEFAULT_FORM_STATE.amount,
+        currency: initialValues?.currency ?? DEFAULT_FORM_STATE.currency,
+        stage: initialValues?.stage ?? DEFAULT_FORM_STATE.stage,
+        status: initialValues?.status ?? DEFAULT_FORM_STATE.status,
+        expected_close_date: initialValues?.expected_close_date ?? DEFAULT_FORM_STATE.expected_close_date,
+        notes: initialValues?.notes ?? DEFAULT_FORM_STATE.notes,
+    };
+}
+
+function parseApiError(error: unknown): string {
+    if (typeof error === "object" && error !== null && "response" in error) {
+        const response = (error as { response?: { data?: { detail?: string } } }).response;
+        if (typeof response?.data?.detail === "string" && response.data.detail.trim().length > 0) {
+            return response.data.detail;
+        }
+    }
+
+    return "The deal could not be saved.";
+}
+
 export default function DealCreateForm({
     companies,
     contacts,
     products,
     onCreated,
+    onSuccess,
+    onSubmit,
+    initialValues,
+    mode = "create",
+    title,
+    description,
+    submitLabel,
+    submittingLabel,
+    successMessage,
 }: DealCreateFormProps) {
-    const [formData, setFormData] = useState<DealCreateRequest>(DEFAULT_FORM_STATE);
+    const [formData, setFormData] = useState<DealCreateRequest>(() => buildInitialFormState(initialValues));
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
     const [errorMessage, setErrorMessage] = useState<string>("");
-    const [successMessage, setSuccessMessage] = useState<string>("");
+    const [amountError, setAmountError] = useState<string>("");
+    const [formSuccessMessage, setFormSuccessMessage] = useState<string>("");
+
+    const resolvedOnSubmit = onSubmit ?? createDeal;
+    const resolvedOnSuccess = onSuccess ?? onCreated ?? (() => undefined);
+    const resolvedTitle = title ?? (mode === "edit" ? "Edit deal" : "Create deal");
+    const resolvedDescription = description ?? (
+        mode === "edit"
+            ? "Update this deal and keep related entities aligned."
+            : "Add a new sales opportunity for this tenant."
+    );
+    const resolvedSubmitLabel = submitLabel ?? (mode === "edit" ? "Save changes" : "Create deal");
+    const resolvedSubmittingLabel = submittingLabel ?? (mode === "edit" ? "Saving..." : "Creating...");
+    const resolvedSuccessMessage = successMessage ?? (
+        mode === "edit" ? "Deal updated successfully." : "Deal created successfully."
+    );
+
+    useEffect(() => {
+        setFormData(buildInitialFormState(initialValues));
+        setErrorMessage("");
+        setAmountError("");
+        setFormSuccessMessage("");
+    }, [initialValues]);
 
     const availableContacts = useMemo(() => {
         if (!formData.company_id) {
@@ -48,6 +127,19 @@ export default function DealCreateForm({
     const activeProducts = useMemo(() => {
         return products.filter((product) => product.is_active);
     }, [products]);
+
+    const selectedCompanyMissing =
+        Boolean(formData.company_id) &&
+        !companies.some((company) => company.id === formData.company_id);
+    const selectedContactMissing =
+        Boolean(formData.contact_id) &&
+        !availableContacts.some((contact) => contact.id === formData.contact_id);
+    const selectedProduct = formData.product_id
+        ? products.find((product) => product.id === formData.product_id) ?? null
+        : null;
+    const selectedProductMissing =
+        Boolean(formData.product_id) &&
+        !activeProducts.some((product) => product.id === formData.product_id);
 
     function updateField<K extends keyof DealCreateRequest>(
         field: K,
@@ -65,7 +157,13 @@ export default function DealCreateForm({
         try {
             setIsSubmitting(true);
             setErrorMessage("");
-            setSuccessMessage("");
+            setFormSuccessMessage("");
+
+            const amountResult = parseStrictDecimalAmountInput(formData.amount);
+            if (amountResult.error || amountResult.value === null) {
+                setAmountError(amountResult.error ?? TOTAL_AMOUNT_INVALID_MESSAGE);
+                return;
+            }
 
             const payload: DealCreateRequest = {
                 ...formData,
@@ -73,36 +171,21 @@ export default function DealCreateForm({
                 company_id: formData.company_id,
                 contact_id: formData.contact_id || null,
                 product_id: formData.product_id || null,
-                amount: formData.amount.trim(),
+                amount: String(amountResult.value),
                 currency: formData.currency.trim().toUpperCase(),
                 expected_close_date: formData.expected_close_date || null,
                 notes: formData.notes?.trim() ? formData.notes.trim() : null,
             };
 
-            await createDeal(payload);
-            setSuccessMessage("Deal created successfully.");
-            setFormData(DEFAULT_FORM_STATE);
-            await onCreated();
-        } catch (error: unknown) {
-            console.error("Failed to create deal:", error);
-
-            let message = "The deal could not be created.";
-
-            if (
-                typeof error === "object" &&
-                error !== null &&
-                "response" in error
-            ) {
-                const response = (error as {
-                    response?: { data?: { detail?: string } };
-                }).response;
-
-                if (response?.data?.detail) {
-                    message = response.data.detail;
-                }
+            await resolvedOnSubmit(payload);
+            setFormSuccessMessage(resolvedSuccessMessage);
+            if (mode === "create") {
+                setFormData(DEFAULT_FORM_STATE);
             }
-
-            setErrorMessage(message);
+            await resolvedOnSuccess();
+        } catch (error: unknown) {
+            console.error("Failed to save deal:", error);
+            setErrorMessage(parseApiError(error));
         } finally {
             setIsSubmitting(false);
         }
@@ -110,9 +193,9 @@ export default function DealCreateForm({
 
     return (
         <section className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-            <h2 className="text-2xl font-semibold text-slate-900">Create deal</h2>
+            <h2 className="text-2xl font-semibold text-slate-900">{resolvedTitle}</h2>
             <p className="mt-2 text-sm text-slate-600">
-                Add a new sales opportunity for this tenant.
+                {resolvedDescription}
             </p>
 
             <form className="mt-6 space-y-6" onSubmit={handleSubmit}>
@@ -145,6 +228,11 @@ export default function DealCreateForm({
                             required
                         >
                             <option value="">Select company</option>
+                            {selectedCompanyMissing ? (
+                                <option value={formData.company_id}>
+                                    Unknown company ({formData.company_id})
+                                </option>
+                            ) : null}
                             {companies.map((company) => (
                                 <option key={company.id} value={company.id}>
                                     {company.name}
@@ -166,6 +254,11 @@ export default function DealCreateForm({
                             }
                         >
                             <option value="">No contact</option>
+                            {selectedContactMissing && formData.contact_id ? (
+                                <option value={formData.contact_id}>
+                                    Unknown contact ({formData.contact_id})
+                                </option>
+                            ) : null}
                             {availableContacts.map((contact) => (
                                 <option key={contact.id} value={contact.id}>
                                     {contact.first_name} {contact.last_name ?? ""}
@@ -187,6 +280,13 @@ export default function DealCreateForm({
                             }
                         >
                             <option value="">No product</option>
+                            {selectedProductMissing && formData.product_id ? (
+                                <option value={formData.product_id}>
+                                    {selectedProduct
+                                        ? `${selectedProduct.name} (${selectedProduct.sku})${selectedProduct.is_active ? "" : " [inactive]"}`
+                                        : `Unknown product (${formData.product_id})`}
+                                </option>
+                            ) : null}
                             {activeProducts.map((product) => (
                                 <option key={product.id} value={product.id}>
                                     {product.name} ({product.sku})
@@ -201,14 +301,24 @@ export default function DealCreateForm({
                         </label>
                         <input
                             id="deal-amount"
-                            type="number"
-                            min="0"
-                            step="0.01"
+                            type="text"
+                            inputMode="decimal"
                             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                             value={formData.amount}
-                            onChange={(event) => updateField("amount", event.target.value)}
+                            onChange={(event) => {
+                                updateField("amount", sanitizeStrictDecimalInput(event.target.value));
+                                setAmountError("");
+                            }}
+                            onKeyDown={(event) => {
+                                if (shouldBlockStrictDecimalKey(event.key)) {
+                                    event.preventDefault();
+                                }
+                            }}
                             required
                         />
+                        {amountError ? (
+                            <p className="mt-1 text-sm text-red-600">{amountError}</p>
+                        ) : null}
                     </div>
 
                     <div>
@@ -238,13 +348,11 @@ export default function DealCreateForm({
                             }
                             required
                         >
-                            <option value="new lead">New Lead</option>
-                            <option value="qualified lead">Qualified Lead</option>
-                            <option value="proposal sent">Proposal Sent</option>
-                            <option value="estimate sent">Estimate Sent</option>
-                            <option value="negotiating contract terms">Negotiating Contract Terms</option>
-                            <option value="contract signed">Contract Signed</option>
-                            <option value="deal not secured">Deal Not Secured</option>
+                            {DEAL_STAGES.map((stage) => (
+                                <option key={stage} value={stage}>
+                                    {formatDealLabel(stage)}
+                                </option>
+                            ))}
                         </select>
                     </div>
 
@@ -261,10 +369,11 @@ export default function DealCreateForm({
                             }
                             required
                         >
-                            <option value="open">Open</option>
-                            <option value="in progress">In Progress</option>
-                            <option value="won">Won</option>
-                            <option value="lost">Lost</option>
+                            {DEAL_STATUSES.map((status) => (
+                                <option key={status} value={status}>
+                                    {formatDealLabel(status)}
+                                </option>
+                            ))}
                         </select>
                     </div>
                 </div>
@@ -302,9 +411,9 @@ export default function DealCreateForm({
                     </div>
                 ) : null}
 
-                {successMessage ? (
+                {formSuccessMessage ? (
                     <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-                        {successMessage}
+                        {formSuccessMessage}
                     </div>
                 ) : null}
 
@@ -314,7 +423,7 @@ export default function DealCreateForm({
                         disabled={isSubmitting}
                         className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                        {isSubmitting ? "Creating..." : "Create deal"}
+                        {isSubmitting ? resolvedSubmittingLabel : resolvedSubmitLabel}
                     </button>
                 </div>
             </form>

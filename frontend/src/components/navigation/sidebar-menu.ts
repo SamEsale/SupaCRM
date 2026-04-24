@@ -25,7 +25,7 @@ export const sidebarMenu: SidebarMenuSection[] = [
             { title: "All Companies", href: "/companies" },
             { title: "Add Contact", href: "/contacts/create" },
             { title: "Add Company", href: "/companies/create" },
-            { title: "Add Lead", disabled: true },
+            { title: "Add Lead", href: "/sales/leads/create" },
         ],
     },
     {
@@ -33,9 +33,9 @@ export const sidebarMenu: SidebarMenuSection[] = [
         items: [
             { title: "All Deals", href: "/deals" },
             { title: "Add Deal", href: "/deals/create" },
-            { title: "Add Lead", disabled: true },
-            { title: "Sales Pipeline", disabled: true },
-            { title: "Opportunities", disabled: true },
+            { title: "Add Lead", href: "/sales/leads/create" },
+            { title: "Sales Pipeline", href: "/sales/pipeline" },
+            { title: "Opportunities", href: "/sales/opportunities" },
         ],
     },
     {

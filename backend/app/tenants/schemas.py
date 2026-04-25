@@ -38,6 +38,20 @@ class TenantOut(BaseModel):
     updated_at: datetime
 
 
+class TenantBrandingOut(BaseModel):
+    tenant_id: str
+    logo_file_key: str | None = None
+    logo_url: str | None = None
+    brand_primary_color: str = "#2563EB"
+    brand_secondary_color: str = "#1D4ED8"
+    sidebar_background_color: str = "#111827"
+    sidebar_text_color: str = "#FFFFFF"
+
+
+class TenantBrandingUpdateRequest(BaseModel):
+    logo_file_key: str | None = Field(default=None, max_length=2048)
+
+
 class TenantUpdateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     legal_name: str | None = Field(default=None, max_length=255)

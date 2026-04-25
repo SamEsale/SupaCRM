@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from typing import Any
 
 import pytest
 
+os.environ["DEBUG"] = "false"
+
+from app.tenants import routes as tenant_routes
 from app.tenants import service as tenant_service
 
 
@@ -135,6 +139,67 @@ async def test_get_tenant_details_returns_company_profile_fields() -> None:
     assert str(tenant.secondary_currency_rate) == "0.091500"
     assert tenant.brand_primary_color == "#2563EB"
     assert tenant.sidebar_background_color == "#111827"
+
+
+@pytest.mark.asyncio
+async def test_get_current_tenant_branding_route_returns_safe_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_get_tenant_branding(*_: object, **__: object):
+        return tenant_service.TenantBrandingDetails(
+            tenant_id="tenant-1",
+            logo_file_key=None,
+            logo_url=None,
+            brand_primary_color=None,
+            brand_secondary_color=None,
+            sidebar_background_color=None,
+            sidebar_text_color=None,
+        )
+
+    monkeypatch.setattr(tenant_routes, "get_tenant_branding", _fake_get_tenant_branding)
+
+    response = await tenant_routes.get_current_tenant_branding(
+        tenant_id="tenant-1",
+        db=object(),
+    )
+
+    assert response.tenant_id == "tenant-1"
+    assert response.logo_file_key is None
+    assert response.logo_url is None
+    assert response.brand_primary_color == "#2563EB"
+    assert response.brand_secondary_color == "#1D4ED8"
+    assert response.sidebar_background_color == "#111827"
+    assert response.sidebar_text_color == "#FFFFFF"
+
+
+@pytest.mark.asyncio
+async def test_get_current_tenant_branding_route_preserves_saved_branding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_get_tenant_branding(*_: object, **__: object):
+        return tenant_service.TenantBrandingDetails(
+            tenant_id="tenant-1",
+            logo_file_key="tenant-logos/tenant-1/logo.png",
+            logo_url="https://cdn.example.com/logo.png",
+            brand_primary_color="#F97316",
+            brand_secondary_color="#FDBA74",
+            sidebar_background_color="#1E293B",
+            sidebar_text_color="#F8FAFC",
+        )
+
+    monkeypatch.setattr(tenant_routes, "get_tenant_branding", _fake_get_tenant_branding)
+
+    response = await tenant_routes.get_current_tenant_branding(
+        tenant_id="tenant-1",
+        db=object(),
+    )
+
+    assert response.logo_file_key == "tenant-logos/tenant-1/logo.png"
+    assert response.logo_url == "https://cdn.example.com/logo.png"
+    assert response.brand_primary_color == "#F97316"
+    assert response.brand_secondary_color == "#FDBA74"
+    assert response.sidebar_background_color == "#1E293B"
+    assert response.sidebar_text_color == "#F8FAFC"
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+    authState: {
+        isReady: true,
+        isAuthenticated: true,
+        accessToken: "token",
+    },
     push: vi.fn(),
     refresh: vi.fn(),
     getJournalEntries: vi.fn(),
@@ -23,11 +28,7 @@ const mocks = vi.hoisted(() => ({
 let currentParams: Record<string, string> = {};
 
 vi.mock("@/hooks/use-auth", () => ({
-    useAuth: () => ({
-        isReady: true,
-        isAuthenticated: true,
-        accessToken: "token",
-    }),
+    useAuth: () => mocks.authState,
 }));
 
 vi.mock("@/services/accounting.service", () => ({
@@ -66,6 +67,9 @@ describe("finance invoice flow", () => {
         currentParams = { invoiceId: "invoice-1" };
         mocks.push.mockReset();
         mocks.refresh.mockReset();
+        mocks.authState.isReady = true;
+        mocks.authState.isAuthenticated = true;
+        mocks.authState.accessToken = "token";
         mocks.getJournalEntries.mockReset();
         mocks.getCompanies.mockReset();
         mocks.getContacts.mockReset();
@@ -245,6 +249,31 @@ describe("finance invoice flow", () => {
         expect(mocks.push).toHaveBeenCalledWith("/finance/invoices/invoice-1?createdFrom=quote");
     });
 
+    it("does not call protected invoice create loaders before auth readiness", async () => {
+        mocks.authState.isReady = false;
+
+        const view = render(<CreateInvoicePage />);
+
+        await waitFor(() => {
+            expect(mocks.getCompanies).not.toHaveBeenCalled();
+            expect(mocks.getContacts).not.toHaveBeenCalled();
+            expect(mocks.getProducts).not.toHaveBeenCalled();
+            expect(mocks.getCurrentTenant).not.toHaveBeenCalled();
+            expect(mocks.getQuoteById).not.toHaveBeenCalled();
+        });
+
+        mocks.authState.isReady = true;
+        view.rerender(<CreateInvoicePage />);
+
+        await waitFor(() => {
+            expect(mocks.getCompanies).toHaveBeenCalledTimes(1);
+            expect(mocks.getContacts).toHaveBeenCalledTimes(1);
+            expect(mocks.getProducts).toHaveBeenCalledTimes(1);
+            expect(mocks.getCurrentTenant).toHaveBeenCalledTimes(1);
+            expect(mocks.getQuoteById).toHaveBeenCalledWith("quote-1");
+        });
+    });
+
     it("uses the tenant default currency when no quote prefill is present", async () => {
         mocks.searchParams = new URLSearchParams();
 
@@ -303,7 +332,7 @@ describe("finance invoice flow", () => {
         });
 
         await waitFor(() => {
-            expect(screen.getByText(/Payment state/i)).toBeTruthy();
+            expect(screen.getByText(/^partially paid$/i)).toBeTruthy();
         });
 
         expect(screen.getByText(/Invoice created successfully from the quote context/i)).toBeTruthy();
@@ -312,7 +341,6 @@ describe("finance invoice flow", () => {
         expect(screen.getByRole("heading", { name: "Payments" })).toBeTruthy();
         expect(screen.getByRole("heading", { name: "Currency context" })).toBeTruthy();
         expect(screen.getByText(/Secondary currency view/i)).toBeTruthy();
-        expect(screen.getByText(/^partially paid$/i)).toBeTruthy();
         expect(screen.getByText(/Deposit received/i)).toBeTruthy();
         expect(screen.getByRole("heading", { name: "Accounting visibility" })).toBeTruthy();
         expect(screen.getByText(/Invoice INV-000101 issued/i)).toBeTruthy();

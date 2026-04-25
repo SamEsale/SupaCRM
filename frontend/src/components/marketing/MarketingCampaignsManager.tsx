@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useToast } from "@/components/feedback/ToastProvider";
 import { useAuth } from "@/hooks/use-auth";
@@ -243,6 +243,7 @@ function formatHandoffStatus(value: string | null): string {
 export default function MarketingCampaignsManager() {
     const auth = useAuth();
     const toast = useToast();
+    const executionDetailRequestIdRef = useRef(0);
     const [campaigns, setCampaigns] = useState<MarketingCampaign[]>([]);
     const [companies, setCompanies] = useState<Company[]>([]);
     const [contacts, setContacts] = useState<Contact[]>([]);
@@ -379,21 +380,32 @@ export default function MarketingCampaignsManager() {
         executionId: string,
         recipientFilter: MarketingExecutionRecipientResultFilter,
     ): Promise<void> {
+        const requestId = executionDetailRequestIdRef.current + 1;
+        executionDetailRequestIdRef.current = requestId;
+
         try {
             setIsExecutionDetailLoading(true);
             setExecutionDetailErrorMessage("");
             const detail = await getMarketingCampaignExecutionDetail(campaignId, executionId, {
                 recipient_status: recipientFilter,
             });
+            if (requestId !== executionDetailRequestIdRef.current) {
+                return;
+            }
             setExecutionDetail(detail);
         } catch (error) {
+            if (requestId !== executionDetailRequestIdRef.current) {
+                return;
+            }
             console.error("Failed to load marketing execution detail:", error);
             setExecutionDetail(null);
             setExecutionDetailErrorMessage(
                 getApiErrorMessage(error, "The selected execution results could not be loaded."),
             );
         } finally {
-            setIsExecutionDetailLoading(false);
+            if (requestId === executionDetailRequestIdRef.current) {
+                setIsExecutionDetailLoading(false);
+            }
         }
     }
 
@@ -443,6 +455,7 @@ export default function MarketingCampaignsManager() {
     useEffect(() => {
         setSelectedExecutionId(null);
         setSelectedRecipientFilter("all");
+        executionDetailRequestIdRef.current += 1;
         setExecutionDetail(null);
         setExecutionDetailErrorMessage("");
         setExecutionFeedbackMessage("");
@@ -458,6 +471,7 @@ export default function MarketingCampaignsManager() {
 
     useEffect(() => {
         if (!auth.isReady || !auth.isAuthenticated || !auth.accessToken || !selectedCampaignId) {
+            executionDetailRequestIdRef.current += 1;
             setCampaignDetail(null);
             setExecutionDetail(null);
             setAudiencePreview(null);

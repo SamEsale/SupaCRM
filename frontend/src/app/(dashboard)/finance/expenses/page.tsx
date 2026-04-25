@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { useAuth } from "@/hooks/use-auth";
 import { getApiErrorMessage } from "@/lib/api-errors";
 import {
     getMissingSecondaryCurrencyRateMessage,
@@ -117,6 +118,7 @@ function validateForm(form: ExpenseFormState): string | null {
 }
 
 export default function ExpensesPage() {
+    const auth = useAuth();
     const [tenant, setTenant] = useState<Tenant | null>(null);
     const [expenses, setExpenses] = useState<Expense[]>([]);
     const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -128,6 +130,15 @@ export default function ExpensesPage() {
     const [successMessage, setSuccessMessage] = useState<string>("");
 
     const loadSnapshot = useCallback(async (): Promise<void> => {
+        if (!auth.isReady) {
+            return;
+        }
+
+        if (!auth.isAuthenticated || !auth.accessToken) {
+            setIsLoading(false);
+            return;
+        }
+
         try {
             setIsLoading(true);
             setLoadError("");
@@ -154,7 +165,7 @@ export default function ExpensesPage() {
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, [auth.accessToken, auth.isAuthenticated, auth.isReady]);
 
     useEffect(() => {
         void loadSnapshot();

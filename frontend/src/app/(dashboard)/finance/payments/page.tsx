@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { useAuth } from "@/hooks/use-auth";
 import { getCompanies } from "@/services/companies.service";
 import { getInvoices } from "@/services/invoices.service";
 import { getPayments } from "@/services/payments.service";
@@ -101,6 +102,7 @@ async function loadPaymentsSnapshot(
 }
 
 export default function PaymentsPage() {
+    const auth = useAuth();
     const searchParams = useSearchParams();
     const [snapshot, setSnapshot] = useState<PaymentsSnapshot | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -111,6 +113,15 @@ export default function PaymentsPage() {
     const invoiceFilter = searchParams.get("invoice_id") ?? "";
 
     const loadSnapshot = useCallback(async (): Promise<void> => {
+        if (!auth.isReady) {
+            return;
+        }
+
+        if (!auth.isAuthenticated || !auth.accessToken) {
+            setIsLoading(false);
+            return;
+        }
+
         try {
             setIsLoading(true);
             setErrorMessage("");
@@ -125,7 +136,7 @@ export default function PaymentsPage() {
         } finally {
             setIsLoading(false);
         }
-    }, [invoiceFilter, methodFilter, statusFilter]);
+    }, [auth.accessToken, auth.isAuthenticated, auth.isReady, invoiceFilter, methodFilter, statusFilter]);
 
     useEffect(() => {
         void loadSnapshot();

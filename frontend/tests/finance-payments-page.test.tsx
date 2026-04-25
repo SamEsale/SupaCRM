@@ -8,6 +8,14 @@ const mocks = vi.hoisted(() => ({
     searchParams: new URLSearchParams({ invoice_id: "invoice-1" }),
 }));
 
+vi.mock("@/hooks/use-auth", () => ({
+    useAuth: () => ({
+        isReady: true,
+        isAuthenticated: true,
+        accessToken: "token",
+    }),
+}));
+
 vi.mock("next/navigation", () => ({
     useSearchParams: () => mocks.searchParams,
 }));

@@ -2,6 +2,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+    authState: {
+        isReady: true,
+        isAuthenticated: true,
+        accessToken: "token",
+    },
     push: vi.fn(),
     refresh: vi.fn(),
     getCompanies: vi.fn(),
@@ -15,11 +20,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/hooks/use-auth", () => ({
-    useAuth: () => ({
-        isReady: true,
-        isAuthenticated: true,
-        accessToken: "token",
-    }),
+    useAuth: () => mocks.authState,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -61,6 +62,9 @@ describe("finance quote create flow", () => {
     beforeEach(() => {
         mocks.push.mockReset();
         mocks.refresh.mockReset();
+        mocks.authState.isReady = true;
+        mocks.authState.isAuthenticated = true;
+        mocks.authState.accessToken = "token";
         mocks.getCompanies.mockReset();
         mocks.getContacts.mockReset();
         mocks.getProducts.mockReset();
@@ -164,6 +168,32 @@ describe("finance quote create flow", () => {
 
         expect(mocks.push).toHaveBeenCalledWith("/finance/quotes/quote-1?createdFrom=deal");
         expect(mocks.refresh).toHaveBeenCalled();
+    });
+
+    it("does not call protected quote create loaders before auth readiness", async () => {
+        mocks.authState.isReady = false;
+
+        const view = render(<CreateQuotePage />);
+
+        await waitFor(() => {
+            expect(mocks.getCompanies).not.toHaveBeenCalled();
+            expect(mocks.getContacts).not.toHaveBeenCalled();
+            expect(mocks.getProducts).not.toHaveBeenCalled();
+            expect(mocks.getCurrentTenant).not.toHaveBeenCalled();
+            expect(mocks.getDeals).not.toHaveBeenCalled();
+            expect(mocks.getDealById).not.toHaveBeenCalled();
+        });
+
+        mocks.authState.isReady = true;
+        view.rerender(<CreateQuotePage />);
+
+        await waitFor(() => {
+            expect(mocks.getCompanies).toHaveBeenCalledTimes(1);
+            expect(mocks.getContacts).toHaveBeenCalledTimes(1);
+            expect(mocks.getProducts).toHaveBeenCalledTimes(1);
+            expect(mocks.getCurrentTenant).toHaveBeenCalledTimes(1);
+            expect(mocks.getDeals).toHaveBeenCalledTimes(1);
+        });
     });
 
     it("uses the tenant default currency when no deal prefill is present", async () => {

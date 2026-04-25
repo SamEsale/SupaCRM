@@ -8,6 +8,14 @@ const mocks = vi.hoisted(() => ({
     updateExpense: vi.fn(),
 }));
 
+vi.mock("@/hooks/use-auth", () => ({
+    useAuth: () => ({
+        isReady: true,
+        isAuthenticated: true,
+        accessToken: "token",
+    }),
+}));
+
 vi.mock("@/services/tenants.service", () => ({
     getCurrentTenant: mocks.getCurrentTenant,
 }));

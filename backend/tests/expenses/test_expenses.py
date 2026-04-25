@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+import os
 from typing import Any
 
 import pytest
 
+os.environ["DEBUG"] = "false"
+
+from app.expenses.routes import list_expenses_route
 from app.expenses.service import create_expense, list_expenses, update_expense
 from app.tenants.fx import convert_tenant_secondary_currency_amount
 
@@ -165,6 +169,22 @@ async def test_list_expenses_is_tenant_scoped_and_filterable() -> None:
 
     assert result.total == 1
     assert [item.id for item in result.items] == ["expense-1"]
+
+
+@pytest.mark.asyncio
+async def test_list_expenses_route_responds_with_tenant_scoped_items() -> None:
+    response = await list_expenses_route(
+        status_filter=None,
+        category=None,
+        limit=100,
+        offset=0,
+        tenant_id="tenant-1",
+        db=FakeExpensesSession(),
+    )
+
+    assert response.total == 2
+    assert [item.id for item in response.items] == ["expense-1", "expense-2"]
+    assert all(item.tenant_id == "tenant-1" for item in response.items)
 
 
 @pytest.mark.asyncio

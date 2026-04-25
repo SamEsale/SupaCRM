@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import os
 from typing import Any
 
 import pytest
 
+os.environ["DEBUG"] = "false"
+
+from app.api import api_router
+from app.payments.routes import (
+    get_payment_gateway_settings_route,
+    get_payment_provider_foundation_route,
+)
 from app.payments.settings_service import (
     get_payment_gateway_provider_record,
     get_payment_provider_foundation,
@@ -112,3 +120,39 @@ async def test_get_payment_provider_foundation_reports_ready_and_manual_only_sta
     assert providers["payoneer"].foundation_state == "manual_only"
     assert providers["payoneer"].supports_automated_subscriptions is False
     assert providers["revolut_business"].foundation_state == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_get_payment_gateway_settings_route_returns_gateway_snapshot() -> None:
+    response = await get_payment_gateway_settings_route(
+        tenant_id="tenant-1",
+        db=FakeGatewaySettingsSession(),
+    )
+
+    providers = {provider.provider: provider for provider in response.providers}
+
+    assert response.default_provider == "stripe"
+    assert providers["stripe"].is_enabled is True
+    assert providers["stripe"].configuration_state == "configured"
+    assert providers["payoneer"].is_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_get_payment_provider_foundation_route_returns_foundation_snapshot() -> None:
+    response = await get_payment_provider_foundation_route(
+        tenant_id="tenant-1",
+        db=FakeGatewaySettingsSession(),
+    )
+
+    providers = {provider.provider: provider for provider in response.providers}
+
+    assert response.default_provider == "stripe"
+    assert providers["stripe"].foundation_state == "ready"
+    assert providers["revolut_business"].foundation_state == "disabled"
+
+
+def test_payment_gateway_routes_are_registered_on_api_router() -> None:
+    paths = {route.path for route in api_router.routes}
+
+    assert "/payments/gateway-settings" in paths
+    assert "/payments/provider-foundation" in paths

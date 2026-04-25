@@ -18,6 +18,7 @@ from app.quotes.schemas import (
 )
 from app.quotes.service import (
     create_quote,
+    convert_deal_to_quote,
     convert_quote_to_invoice,
     delete_quote,
     get_quote_by_id,
@@ -43,7 +44,13 @@ def _raise_for_quote_service_error(exc: ValueError) -> HTTPException:
     if detail.startswith("Contact does not exist"):
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
+    if detail.startswith("Contact does not belong to company"):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
     if detail.startswith("Deal does not exist"):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    if detail.startswith("Deal does not belong to company"):
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
     if detail.startswith("Product does not exist"):
@@ -87,6 +94,7 @@ async def create_quote_route(
             company_id=payload.company_id,
             contact_id=payload.contact_id,
             deal_id=payload.deal_id,
+            source_deal_id=payload.source_deal_id,
             product_id=payload.product_id,
             issue_date=payload.issue_date,
             expiry_date=payload.expiry_date,
@@ -143,6 +151,7 @@ async def list_quotes_route(
     status_filter: str | None = Query(default=None, alias="status"),
     company_id: str | None = Query(default=None),
     number: str | None = Query(default=None),
+    source_deal_id: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     tenant_id: str = Depends(get_current_tenant_id),
@@ -156,6 +165,7 @@ async def list_quotes_route(
             status=status_filter,
             company_id=company_id,
             number_query=number,
+            source_deal_id=source_deal_id,
             limit=limit,
             offset=offset,
         )
@@ -185,6 +195,28 @@ async def get_quote_route(
     )
     if quote is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
+
+    return QuoteOut(**asdict(quote))
+
+
+@router.post(
+    "/from-deal/{deal_id}",
+    response_model=QuoteOut,
+    dependencies=[Depends(require_permission(PERMISSION_BILLING_ACCESS))],
+)
+async def convert_deal_to_quote_route(
+    deal_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> QuoteOut:
+    try:
+        quote = await convert_deal_to_quote(
+            db,
+            tenant_id=tenant_id,
+            deal_id=deal_id,
+        )
+    except ValueError as exc:
+        raise _raise_for_quote_service_error(exc) from exc
 
     return QuoteOut(**asdict(quote))
 

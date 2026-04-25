@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import CompaniesList from "@/components/crm/companies-list";
-import { getCompanies } from "@/services/companies.service";
+import { deleteCompany, getCompanies } from "@/services/companies.service";
 import type { Company } from "@/types/crm";
 
 function matchesCompany(company: Company, searchTerm: string): boolean {
@@ -35,6 +35,7 @@ export default function CompaniesPage() {
     const [companies, setCompanies] = useState<Company[]>([]);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [errorMessage, setErrorMessage] = useState<string>("");
+    const [actionMessage, setActionMessage] = useState<string>("");
     const [searchTerm, setSearchTerm] = useState<string>("");
 
     const loadCompanies = useCallback(async (): Promise<void> => {
@@ -56,6 +57,30 @@ export default function CompaniesPage() {
         void loadCompanies();
     }, [loadCompanies]);
 
+    async function handleDeleteCompany(company: Company): Promise<void> {
+        const confirmed = window.confirm(`Delete ${company.name}? This action cannot be undone.`);
+        if (!confirmed) {
+            return;
+        }
+
+        try {
+            setActionMessage("");
+            await deleteCompany(company.id);
+            setActionMessage(`Deleted ${company.name}.`);
+            await loadCompanies();
+        } catch (error: unknown) {
+            console.error("Failed to delete company:", error);
+            const detail =
+                typeof error === "object" &&
+                error !== null &&
+                "response" in error &&
+                typeof (error as { response?: { data?: { detail?: string } } }).response?.data?.detail === "string"
+                    ? (error as { response?: { data?: { detail?: string } } }).response?.data?.detail
+                    : null;
+            setActionMessage(detail ?? "Failed to delete company.");
+        }
+    }
+
     const filteredCompanies = useMemo(() => {
         return companies.filter((company) => matchesCompany(company, searchTerm));
     }, [companies, searchTerm]);
@@ -74,6 +99,10 @@ export default function CompaniesPage() {
                         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                     />
                 </div>
+
+                {actionMessage ? (
+                    <p className="mt-4 text-sm text-slate-700">{actionMessage}</p>
+                ) : null}
             </section>
 
             {isLoading ? (
@@ -84,6 +113,7 @@ export default function CompaniesPage() {
                 <CompaniesList
                     companies={filteredCompanies}
                     total={filteredCompanies.length}
+                    onDeleteCompany={handleDeleteCompany}
                 />
             )}
         </main>

@@ -8,6 +8,9 @@ import uuid
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.accounting.service import sync_invoice_accounting_entries
+from app.payments.service import get_invoice_completed_payment_total, has_invoice_payments
+
 
 ALLOWED_INVOICE_STATUSES: tuple[str, ...] = (
     "draft",
@@ -34,6 +37,9 @@ class InvoiceDetails:
     company_id: str
     contact_id: str | None
     product_id: str | None
+    source_quote_id: str | None
+    subscription_id: str | None
+    billing_cycle_id: str | None
     issue_date: date
     due_date: date
     currency: str
@@ -90,6 +96,26 @@ def _validate_status_transition(*, current_status: str, next_status: str) -> Non
         )
 
 
+def _invoice_changes_require_reposting(
+    existing: InvoiceDetails,
+    *,
+    company_id: str,
+    contact_id: str | None,
+    product_id: str | None,
+    issue_date: date,
+    currency: str,
+    total_amount: Decimal,
+) -> bool:
+    return (
+        existing.company_id != company_id
+        or existing.contact_id != contact_id
+        or existing.product_id != product_id
+        or existing.issue_date != issue_date
+        or existing.currency != currency
+        or existing.total_amount != total_amount
+    )
+
+
 async def _company_exists_for_tenant(
     session: AsyncSession,
     *,
@@ -136,6 +162,33 @@ async def _contact_exists_for_tenant(
     return result.scalar_one_or_none() == 1
 
 
+async def _contact_belongs_to_company(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    contact_id: str,
+    company_id: str,
+) -> bool:
+    result = await session.execute(
+        text(
+            """
+            select company_id
+            from public.contacts
+            where tenant_id = cast(:tenant_id as varchar)
+              and id = cast(:contact_id as varchar)
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "contact_id": contact_id,
+        },
+    )
+    row = result.mappings().first()
+    if not row:
+        return False
+    return row["company_id"] == company_id
+
+
 async def _product_exists_for_tenant(
     session: AsyncSession,
     *,
@@ -154,6 +207,108 @@ async def _product_exists_for_tenant(
         {
             "tenant_id": tenant_id,
             "product_id": product_id,
+        },
+    )
+    return result.scalar_one_or_none() == 1
+
+
+async def _quote_exists_for_tenant(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    quote_id: str,
+) -> bool:
+    result = await session.execute(
+        text(
+            """
+            select 1
+            from public.quotes
+            where tenant_id = cast(:tenant_id as varchar)
+              and id = cast(:quote_id as varchar)
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "quote_id": quote_id,
+        },
+    )
+    return result.scalar_one_or_none() == 1
+
+
+async def _quote_belongs_to_company(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    quote_id: str,
+    company_id: str,
+) -> bool:
+    result = await session.execute(
+        text(
+            """
+            select company_id
+            from public.quotes
+            where tenant_id = cast(:tenant_id as varchar)
+              and id = cast(:quote_id as varchar)
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "quote_id": quote_id,
+        },
+    )
+    row = result.mappings().first()
+    if not row:
+        return False
+    return row["company_id"] == company_id
+
+
+async def _get_quote_source_details(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    quote_id: str,
+) -> dict[str, object] | None:
+    result = await session.execute(
+        text(
+            """
+            select company_id, status
+            from public.quotes
+            where tenant_id = cast(:tenant_id as varchar)
+              and id = cast(:quote_id as varchar)
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "quote_id": quote_id,
+        },
+    )
+    row = result.mappings().first()
+    if not row:
+        return None
+    return {
+        "company_id": row["company_id"],
+        "status": row["status"],
+    }
+
+
+async def _invoice_exists_for_source_quote(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    source_quote_id: str,
+) -> bool:
+    result = await session.execute(
+        text(
+            """
+            select 1
+            from public.invoices
+            where tenant_id = cast(:tenant_id as varchar)
+              and source_quote_id = cast(:source_quote_id as varchar)
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "source_quote_id": source_quote_id,
         },
     )
     return result.scalar_one_or_none() == 1
@@ -212,6 +367,7 @@ async def create_invoice(
     company_id: str,
     contact_id: str | None = None,
     product_id: str | None = None,
+    source_quote_id: str | None = None,
     issue_date: date,
     due_date: date,
     currency: str,
@@ -223,6 +379,7 @@ async def create_invoice(
     normalized_company_id = company_id.strip()
     normalized_contact_id = _clean_optional(contact_id)
     normalized_product_id = _clean_optional(product_id)
+    normalized_source_quote_id = _clean_optional(source_quote_id)
     normalized_currency = _normalize_currency(currency)
     normalized_notes = _clean_optional(notes)
 
@@ -246,12 +403,50 @@ async def create_invoice(
     ):
         raise ValueError(f"Contact does not exist: {normalized_contact_id}")
 
+    if normalized_contact_id is not None and not await _contact_belongs_to_company(
+        session,
+        tenant_id=tenant_id,
+        contact_id=normalized_contact_id,
+        company_id=normalized_company_id,
+    ):
+        raise ValueError(
+            f"Contact does not belong to company: {normalized_contact_id} -> {normalized_company_id}"
+        )
+
     if normalized_product_id is not None and not await _product_exists_for_tenant(
         session,
         tenant_id=tenant_id,
         product_id=normalized_product_id,
     ):
         raise ValueError(f"Product does not exist: {normalized_product_id}")
+
+    if normalized_source_quote_id is not None:
+        quote_source = await _get_quote_source_details(
+            session,
+            tenant_id=tenant_id,
+            quote_id=normalized_source_quote_id,
+        )
+        if quote_source is None:
+            raise ValueError(f"Quote does not exist: {normalized_source_quote_id}")
+
+        if quote_source["company_id"] != normalized_company_id:
+            raise ValueError(
+                f"Quote does not belong to company: {normalized_source_quote_id} -> {normalized_company_id}"
+            )
+
+        if str(quote_source["status"]) != "accepted":
+            raise ValueError(
+                f"Only accepted quotes can be linked to invoices: {normalized_source_quote_id}"
+            )
+
+        if await _invoice_exists_for_source_quote(
+            session,
+            tenant_id=tenant_id,
+            source_quote_id=normalized_source_quote_id,
+        ):
+            raise ValueError(
+                f"Invoice already exists for source quote: {normalized_source_quote_id}"
+            )
 
     invoice_number = await _generate_invoice_number(session, tenant_id=tenant_id)
 
@@ -265,6 +460,9 @@ async def create_invoice(
                 company_id,
                 contact_id,
                 product_id,
+                source_quote_id,
+                subscription_id,
+                billing_cycle_id,
                 issue_date,
                 due_date,
                 currency,
@@ -279,6 +477,9 @@ async def create_invoice(
                 cast(:company_id as varchar),
                 cast(:contact_id as varchar),
                 cast(:product_id as varchar),
+                cast(:source_quote_id as varchar),
+                cast(:subscription_id as varchar),
+                cast(:billing_cycle_id as varchar),
                 :issue_date,
                 :due_date,
                 cast(:currency as varchar),
@@ -293,6 +494,9 @@ async def create_invoice(
                 company_id,
                 contact_id,
                 product_id,
+                source_quote_id,
+                subscription_id,
+                billing_cycle_id,
                 issue_date,
                 due_date,
                 currency,
@@ -310,6 +514,9 @@ async def create_invoice(
             "company_id": normalized_company_id,
             "contact_id": normalized_contact_id,
             "product_id": normalized_product_id,
+            "source_quote_id": normalized_source_quote_id,
+            "subscription_id": None,
+            "billing_cycle_id": None,
             "issue_date": issue_date,
             "due_date": due_date,
             "currency": normalized_currency,
@@ -330,6 +537,9 @@ async def create_invoice(
         company_id=str(row["company_id"]),
         contact_id=row["contact_id"],
         product_id=row["product_id"],
+        source_quote_id=row["source_quote_id"],
+        subscription_id=row["subscription_id"],
+        billing_cycle_id=row["billing_cycle_id"],
         issue_date=row["issue_date"],
         due_date=row["due_date"],
         currency=str(row["currency"]),
@@ -357,6 +567,9 @@ async def get_invoice_by_id(
                 company_id,
                 contact_id,
                 product_id,
+                source_quote_id,
+                subscription_id,
+                billing_cycle_id,
                 issue_date,
                 due_date,
                 currency,
@@ -386,6 +599,9 @@ async def get_invoice_by_id(
         company_id=str(row["company_id"]),
         contact_id=row["contact_id"],
         product_id=row["product_id"],
+        source_quote_id=row["source_quote_id"],
+        subscription_id=row["subscription_id"],
+        billing_cycle_id=row["billing_cycle_id"],
         issue_date=row["issue_date"],
         due_date=row["due_date"],
         currency=str(row["currency"]),
@@ -405,6 +621,7 @@ async def list_invoices(
     status: str | None = None,
     company_id: str | None = None,
     number_query: str | None = None,
+    source_quote_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> InvoiceListResult:
@@ -413,6 +630,7 @@ async def list_invoices(
     status_filter = _validate_status(status_filter_raw) if status_filter_raw else None
     company_filter = _clean_optional(company_id)
     number_search = _clean_optional(number_query)
+    source_quote_filter = _clean_optional(source_quote_id)
 
     count_sql = """
         select count(*)
@@ -427,6 +645,9 @@ async def list_invoices(
             company_id,
             contact_id,
             product_id,
+            source_quote_id,
+            subscription_id,
+            billing_cycle_id,
             issue_date,
             due_date,
             currency,
@@ -476,6 +697,12 @@ async def list_invoices(
         list_sql += number_clause
         params["number_search"] = f"%{number_search.lower()}%"
 
+    if source_quote_filter:
+        source_quote_clause = " and source_quote_id = cast(:source_quote_id as varchar) "
+        count_sql += source_quote_clause
+        list_sql += source_quote_clause
+        params["source_quote_id"] = source_quote_filter
+
     list_sql += """
         order by created_at desc, id desc
         limit :limit
@@ -497,6 +724,9 @@ async def list_invoices(
                 company_id=str(row["company_id"]),
                 contact_id=row["contact_id"],
                 product_id=row["product_id"],
+                source_quote_id=row["source_quote_id"],
+                subscription_id=row["subscription_id"],
+                billing_cycle_id=row["billing_cycle_id"],
                 issue_date=row["issue_date"],
                 due_date=row["due_date"],
                 currency=str(row["currency"]),
@@ -525,6 +755,7 @@ async def update_invoice(
     total_amount: Decimal | None = None,
     status: str | None = None,
     notes: str | None = None,
+    allow_paid_without_payment: bool = False,
 ) -> InvoiceDetails:
     existing = await get_invoice_by_id(session, tenant_id=tenant_id, invoice_id=invoice_id)
     if existing is None:
@@ -543,11 +774,48 @@ async def update_invoice(
     if status is not None:
         _validate_status_transition(current_status=existing.status, next_status=effective_status)
 
+    if (
+        effective_status == "paid"
+        and existing.status != "paid"
+        and not allow_paid_without_payment
+    ):
+        raise ValueError("Invoice paid status is managed by recorded payments. Record a payment instead.")
+
+    if existing.status != "draft" and _invoice_changes_require_reposting(
+        existing,
+        company_id=effective_company_id,
+        contact_id=effective_contact_id,
+        product_id=effective_product_id,
+        issue_date=effective_issue_date,
+        currency=effective_currency,
+        total_amount=effective_total_amount,
+    ):
+        raise ValueError(
+            "Posted invoices can only update status, due date, and notes. "
+            "Create a replacement invoice if company, contact, issue date, currency, or amount must change."
+        )
+
     if not effective_company_id:
         raise ValueError("Company ID is required")
 
     if effective_due_date < effective_issue_date:
         raise ValueError("Due date cannot be earlier than issue date")
+
+    completed_payment_total = await get_invoice_completed_payment_total(
+        session,
+        tenant_id=tenant_id,
+        invoice_id=invoice_id,
+    )
+
+    if effective_status == "cancelled" and completed_payment_total > Decimal("0.00"):
+        raise ValueError(
+            "Invoices with completed payments cannot be cancelled in this launch slice."
+        )
+
+    if effective_total_amount < completed_payment_total:
+        raise ValueError(
+            "Invoice total cannot be reduced below the amount already collected in completed payments."
+        )
 
     if not await _company_exists_for_tenant(
         session,
@@ -562,6 +830,16 @@ async def update_invoice(
         contact_id=effective_contact_id,
     ):
         raise ValueError(f"Contact does not exist: {effective_contact_id}")
+
+    if effective_contact_id is not None and not await _contact_belongs_to_company(
+        session,
+        tenant_id=tenant_id,
+        contact_id=effective_contact_id,
+        company_id=effective_company_id,
+    ):
+        raise ValueError(
+            f"Contact does not belong to company: {effective_contact_id} -> {effective_company_id}"
+        )
 
     if effective_product_id is not None and not await _product_exists_for_tenant(
         session,
@@ -593,6 +871,9 @@ async def update_invoice(
                 company_id,
                 contact_id,
                 product_id,
+                source_quote_id,
+                subscription_id,
+                billing_cycle_id,
                 issue_date,
                 due_date,
                 currency,
@@ -622,13 +903,16 @@ async def update_invoice(
     if not row:
         raise ValueError(f"Invoice does not exist: {invoice_id}")
 
-    return InvoiceDetails(
+    invoice = InvoiceDetails(
         id=str(row["id"]),
         tenant_id=str(row["tenant_id"]),
         number=str(row["number"]),
         company_id=str(row["company_id"]),
         contact_id=row["contact_id"],
         product_id=row["product_id"],
+        source_quote_id=row["source_quote_id"],
+        subscription_id=row["subscription_id"],
+        billing_cycle_id=row["billing_cycle_id"],
         issue_date=row["issue_date"],
         due_date=row["due_date"],
         currency=str(row["currency"]),
@@ -638,6 +922,21 @@ async def update_invoice(
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+    if invoice.status != "draft":
+        await sync_invoice_accounting_entries(
+            session,
+            tenant_id=tenant_id,
+            invoice_id=invoice.id,
+            invoice_number=invoice.number,
+            issue_date=invoice.issue_date,
+            currency=invoice.currency,
+            total_amount=invoice.total_amount,
+            status=invoice.status,
+            memo=invoice.notes,
+        )
+
+    return invoice
 
 
 async def update_invoice_status(
@@ -662,6 +961,9 @@ async def delete_invoice(
     tenant_id: str,
     invoice_id: str,
 ) -> bool:
+    if await has_invoice_payments(session, tenant_id=tenant_id, invoice_id=invoice_id):
+        raise ValueError("Invoices with recorded payments cannot be deleted.")
+
     result = await session.execute(
         text(
             """

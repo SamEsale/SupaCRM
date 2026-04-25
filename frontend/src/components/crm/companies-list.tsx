@@ -1,13 +1,17 @@
+import Link from "next/link";
+
+import { formatCompanyAddress } from "@/components/crm/company-address-utils";
 import type { Company } from "@/types/crm";
 
 interface CompaniesListProps {
     companies: Company[];
     total: number;
+    onDeleteCompany?: (company: Company) => void;
 }
 
 function formatPhone(phone: string | null): string {
     if (!phone) {
-        return "—";
+        return "-";
     }
 
     return phone.replace(/-/g, "");
@@ -16,6 +20,7 @@ function formatPhone(phone: string | null): string {
 export default function CompaniesList({
     companies,
     total,
+    onDeleteCompany,
 }: CompaniesListProps) {
     return (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -54,6 +59,11 @@ export default function CompaniesList({
                             <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
                                 Industry
                             </th>
+                            {onDeleteCompany ? (
+                                <th className="sticky right-0 z-10 bg-slate-50 px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                    Actions
+                                </th>
+                            ) : null}
                         </tr>
                     </thead>
 
@@ -61,29 +71,53 @@ export default function CompaniesList({
                         {companies.map((company) => (
                             <tr key={company.id}>
                                 <td className="px-6 py-4 text-sm font-medium text-slate-900">
-                                    {company.name}
+                                    <Link
+                                        href={`/companies/${company.id}`}
+                                        className="underline-offset-2 hover:underline"
+                                    >
+                                        {company.name}
+                                    </Link>
                                 </td>
                                 <td className="px-6 py-4 text-sm text-slate-700">
-                                    {company.address ?? "—"}
+                                    {company.address ? formatCompanyAddress(company.address) : "-"}
                                 </td>
                                 <td className="px-6 py-4 text-sm text-slate-700">
-                                    {company.vat_number ?? "—"}
+                                    {company.vat_number ?? "-"}
                                 </td>
                                 <td className="px-6 py-4 text-sm text-slate-700">
-                                    {company.registration_number ?? "—"}
+                                    {company.registration_number ?? "-"}
                                 </td>
                                 <td className="px-6 py-4 text-sm text-slate-700">
-                                    {company.website ?? "—"}
+                                    {company.website ?? "-"}
                                 </td>
                                 <td className="px-6 py-4 text-sm text-slate-700">
-                                    {company.email ?? "—"}
+                                    {company.email ?? "-"}
                                 </td>
                                 <td className="px-6 py-4 text-sm text-slate-700">
                                     {formatPhone(company.phone)}
                                 </td>
                                 <td className="px-6 py-4 text-sm text-slate-700">
-                                    {company.industry ?? "—"}
+                                    {company.industry ?? "-"}
                                 </td>
+                                {onDeleteCompany ? (
+                                    <td className="sticky right-0 z-10 border-l border-slate-200 bg-white px-6 py-4 text-sm shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)]">
+                                        <div className="flex flex-wrap gap-2">
+                                            <Link
+                                                href={`/companies/${company.id}/edit`}
+                                                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                                            >
+                                                Edit
+                                            </Link>
+                                            <button
+                                                type="button"
+                                                onClick={() => onDeleteCompany(company)}
+                                                className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-700"
+                                            >
+                                                Delete company
+                                            </button>
+                                        </div>
+                                    </td>
+                                ) : null}
                             </tr>
                         ))}
                     </tbody>

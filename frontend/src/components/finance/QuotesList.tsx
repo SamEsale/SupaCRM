@@ -228,6 +228,11 @@ export default function QuotesList({
                                         >
                                             {quote.number}
                                         </Link>
+                                        {quote.source_deal_id ? (
+                                            <p className="mt-1 text-xs text-slate-500">
+                                                From deal: {getDealName(deals, quote.source_deal_id)}
+                                            </p>
+                                        ) : null}
                                     </td>
                                     <td className="border-b border-slate-200 px-4 py-3 text-sm text-slate-700">
                                         {getCompanyName(companies, quote.company_id)}

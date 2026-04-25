@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { getCurrentTenant } from "@/services/tenants.service";
-import type { Tenant } from "@/types/tenant";
+import type { Tenant } from "@/types/tenants";
 
 function formatLabel(value: string): string {
     return value
@@ -107,7 +107,7 @@ export default function SettingsOverview() {
                     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         <DetailCard label="Workspace" value={tenant.name} />
                         <DetailCard label="Status" value={formatLabel(tenant.status)} />
-                        <DetailCard label="Default Currency" value={tenant.default_currency} />
+                        <DetailCard label="Default Currency" value={tenant.default_currency ?? "SEK"} />
                         <DetailCard
                             label="Logo Reference"
                             value={tenant.logo_file_key?.trim() ? "Configured" : "Not configured"}

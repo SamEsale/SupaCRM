@@ -4,6 +4,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from app.core.api_errors import build_error_content
 from app.core.config import settings
 from app.db import set_current_tenant_id, reset_current_tenant_id
 
@@ -28,12 +29,18 @@ class TenantMiddleware(BaseHTTPMiddleware):
         token = set_current_tenant_id(header_tenant_id)
 
         try:
+            if request.method.upper() == "OPTIONS":
+                return await call_next(request)
+
             if settings.REQUIRE_TENANT_HEADER:
                 if not self._is_public_path(request.url.path):
                     if not header_tenant_id:
                         return JSONResponse(
                             status_code=400,
-                            content={"detail": f"Missing required tenant header: {tenant_header}"},
+                            content=build_error_content(
+                                code="bad_request",
+                                message=f"Missing required tenant header: {tenant_header}",
+                            ),
                         )
 
             return await call_next(request)
@@ -52,10 +59,15 @@ class TenantMiddleware(BaseHTTPMiddleware):
         """
         return (
             path == "/favicon.ico"
+            or path.startswith("/media")
             or path.startswith("/auth/login")
+            or path.startswith("/auth/register")
             or path.startswith("/auth/refresh")
             or path.startswith("/auth/password-reset")
+            or path.startswith("/commercial/catalog")
+            or path.startswith("/commercial/webhooks")
             or path.startswith("/health")
+            or path.startswith("/ready")
             or path.startswith("/docs")
             or path.startswith("/openapi")
             or path.startswith("/redoc")

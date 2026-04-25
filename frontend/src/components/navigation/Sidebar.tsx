@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import TenantBrandBlock from "@/components/navigation/TenantBrandBlock";
+import type { TenantBranding } from "@/types/settings";
 import { sidebarMenu } from "./sidebar-menu";
 
 function ChevronIcon({ isOpen }: { isOpen: boolean }) {
@@ -23,7 +25,13 @@ function ChevronIcon({ isOpen }: { isOpen: boolean }) {
     );
 }
 
-export default function Sidebar() {
+type SidebarProps = {
+    branding: TenantBranding | null;
+};
+
+export default function Sidebar({
+    branding,
+}: SidebarProps) {
     const pathname = usePathname();
     const [openSectionTitle, setOpenSectionTitle] = useState<string | null>(null);
 
@@ -42,15 +50,23 @@ export default function Sidebar() {
     }
 
     return (
-        <aside className="flex h-full w-64 shrink-0 flex-col bg-slate-950 text-white">
-            <div className="border-b border-slate-800 px-4 py-5">
-                <h1 className="text-xl font-bold">SupaCRM</h1>
+        <aside
+            className="flex h-full w-64 shrink-0 flex-col bg-[var(--sidebar-bg)] text-[var(--sidebar-text)]"
+            style={{
+                backgroundColor: "var(--sidebar-bg)",
+                color: "var(--sidebar-text)",
+            }}
+        >
+            <div className="border-b border-[var(--sidebar-border)] px-4 py-5">
+                <TenantBrandBlock branding={branding} tone="dark" size="compact" />
             </div>
 
             <nav className="flex-1 overflow-y-auto px-3 py-4">
                 <div className="space-y-2">
                     {sidebarMenu.map((section) => {
-                        const isOpen = openSectionTitle === section.title;
+                        const isOpen =
+                            openSectionTitle === section.title ||
+                            (openSectionTitle === null && activeSectionTitle === section.title);
                         const isCurrentSection = activeSectionTitle === section.title;
 
                         return (
@@ -60,8 +76,8 @@ export default function Sidebar() {
                                     onClick={() => handleToggle(section.title)}
                                     className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
                                         isOpen || isCurrentSection
-                                            ? "bg-slate-800 text-white"
-                                            : "text-slate-300 hover:bg-slate-900 hover:text-white"
+                                            ? "bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)]"
+                                            : "text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover-bg)] hover:text-[var(--sidebar-text)]"
                                     }`}
                                     aria-expanded={isOpen}
                                 >
@@ -80,10 +96,10 @@ export default function Sidebar() {
                                                 return (
                                                     <div
                                                         key={item.title}
-                                                        className="rounded-md px-3 py-2 text-sm text-slate-500"
+                                                        className="rounded-md px-3 py-2 text-sm text-[var(--sidebar-muted-text)]"
                                                     >
                                                         {item.title}
-                                                        <span className="ml-2 text-xs text-slate-600">
+                                                        <span className="ml-2 text-xs text-[var(--sidebar-muted-text)] opacity-75">
                                                             Coming soon
                                                         </span>
                                                     </div>
@@ -96,8 +112,8 @@ export default function Sidebar() {
                                                     href={item.href}
                                                     className={`block rounded-md px-3 py-2 text-sm transition ${
                                                         isActiveLink
-                                                            ? "bg-slate-700 text-white"
-                                                            : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                                                            ? "bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)]"
+                                                            : "text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover-bg)] hover:text-[var(--sidebar-text)]"
                                                     }`}
                                                 >
                                                     {item.title}

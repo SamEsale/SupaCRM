@@ -1,64 +1,43 @@
 "use client";
 
+import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
 
 import { useAuth } from "@/hooks/use-auth";
 
-interface ProtectedRouteProps {
-    children: React.ReactNode;
-}
+type ProtectedRouteProps = {
+    children: ReactNode;
+};
 
-function ProtectedRouteLoadingShell({
-    title,
-    description,
-}: {
-    title: string;
-    description: string;
-}) {
-    return (
-        <main className="flex min-h-screen items-center justify-center bg-slate-100 px-6">
-            <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
-                <h1 className="text-xl font-semibold text-slate-900">{title}</h1>
-                <p className="mt-2 text-sm text-slate-600">{description}</p>
-            </div>
-        </main>
-    );
-}
-
-export default function ProtectedRoute({
-    children,
-}: ProtectedRouteProps) {
-    const router = useRouter();
+export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     const auth = useAuth();
-    const [isMounted, setIsMounted] = useState(false);
+    const router = useRouter();
+    const [hasHydrated, setHasHydrated] = useState(false);
 
     useEffect(() => {
-        setIsMounted(true);
+        const timer = window.setTimeout(() => {
+            setHasHydrated(true);
+        }, 0);
+
+        return () => window.clearTimeout(timer);
     }, []);
 
     useEffect(() => {
-        if (isMounted && auth.isReady && !auth.isAuthenticated) {
+        if (!hasHydrated || !auth.isReady) {
+            return;
+        }
+
+        if (!auth.isAuthenticated) {
             router.replace("/login");
         }
-    }, [auth.isAuthenticated, auth.isReady, isMounted, router]);
+    }, [auth.isAuthenticated, auth.isReady, hasHydrated, router]);
 
-    if (!isMounted || !auth.isReady) {
-        return (
-            <ProtectedRouteLoadingShell
-                title="Loading session"
-                description="Checking your authentication state."
-            />
-        );
+    if (!hasHydrated || !auth.isReady) {
+        return <div className="p-6 text-sm text-slate-600">Loading session...</div>;
     }
 
     if (!auth.isAuthenticated) {
-        return (
-            <ProtectedRouteLoadingShell
-                title="Redirecting to login"
-                description="Your session was not found."
-            />
-        );
+        return <div className="p-6 text-sm text-slate-600">Loading session...</div>;
     }
 
     return <>{children}</>;

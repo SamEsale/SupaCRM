@@ -66,6 +66,7 @@ export default function DealFollowUpCard({ deal, onUpdated }: DealFollowUpCardPr
     const [isSaving, setIsSaving] = useState<boolean>(false);
     const [errorMessage, setErrorMessage] = useState<string>("");
     const [successMessage, setSuccessMessage] = useState<string>("");
+    const [savedStateLabel, setSavedStateLabel] = useState<string>("");
 
     useEffect(() => {
         setNextFollowUpAt(toDateTimeLocalValue(deal.next_follow_up_at));
@@ -75,6 +76,7 @@ export default function DealFollowUpCard({ deal, onUpdated }: DealFollowUpCardPr
     useEffect(() => {
         setErrorMessage("");
         setSuccessMessage("");
+        setSavedStateLabel("");
     }, [deal.id]);
 
     const followUpState = useMemo(() => getDealFollowUpState(deal), [deal]);
@@ -94,6 +96,7 @@ export default function DealFollowUpCard({ deal, onUpdated }: DealFollowUpCardPr
             });
 
             setSuccessMessage("Follow-up updated.");
+            setSavedStateLabel(nextFollowUpAt ? "Upcoming" : "");
             onUpdated?.(updatedDeal);
         } catch (error) {
             console.error("Failed to update deal follow-up:", error);
@@ -158,6 +161,7 @@ export default function DealFollowUpCard({ deal, onUpdated }: DealFollowUpCardPr
 
                 {errorMessage ? <p className="text-sm text-red-600">{errorMessage}</p> : null}
                 {successMessage ? <p className="text-sm text-green-700">{successMessage}</p> : null}
+                {savedStateLabel ? <p className="text-sm font-semibold text-blue-700">{savedStateLabel}</p> : null}
 
                 <div className="flex flex-wrap items-center gap-3">
                     <button

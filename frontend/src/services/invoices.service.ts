@@ -13,6 +13,7 @@ export interface GetInvoicesParams {
     status?: InvoiceStatus;
     company_id?: string;
     number?: string;
+    source_quote_id?: string;
     limit?: number;
     offset?: number;
 }

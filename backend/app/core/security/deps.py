@@ -1,7 +1,8 @@
-﻿from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 
+from app.core.security.auth_cache import auth_cache, ttl_until_epoch
 from app.core.security.jwt import decode_access_token
 from app.db import async_session_factory, set_tenant_guc
 
@@ -41,6 +42,12 @@ async def get_current_principal(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Tenant mismatch (header tenant does not match token tenant)",
         )
+
+    cached_principal = await auth_cache.get_principal_snapshot(str(payload["jti"]))
+    if cached_principal:
+        cached_payload = dict(payload)
+        cached_payload.update(cached_principal)
+        return cached_payload
 
     async with async_session_factory() as session:
         await set_tenant_guc(session, str(tenant_id))
@@ -89,8 +96,18 @@ async def get_current_principal(
             detail="Authenticated account is inactive",
         )
 
-    payload["tenant_status"] = tenant_status
-    return payload
+    validated_payload = dict(payload)
+    validated_payload["tenant_status"] = tenant_status
+    validated_payload["tenant_is_active"] = bool(row["tenant_is_active"])
+    validated_payload["user_is_active"] = bool(row["user_is_active"])
+    validated_payload["membership_is_active"] = bool(row["membership_is_active"])
+
+    await auth_cache.set_principal_snapshot(
+        str(payload["jti"]),
+        validated_payload,
+        ttl_seconds=ttl_until_epoch(int(payload["exp"]), maximum_seconds=60),
+    )
+    return validated_payload
 
 
 def get_current_user(payload: dict = Depends(get_current_principal)) -> str:

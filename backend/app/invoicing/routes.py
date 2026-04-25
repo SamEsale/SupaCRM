@@ -41,7 +41,16 @@ def _raise_for_invoice_service_error(exc: ValueError) -> HTTPException:
     if detail.startswith("Contact does not exist"):
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
+    if detail.startswith("Contact does not belong to company"):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
     if detail.startswith("Product does not exist"):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    if detail.startswith("Quote does not exist"):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    if detail.startswith("Quote does not belong to company"):
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
     if detail.startswith("Invalid invoice status transition"):
@@ -54,6 +63,21 @@ def _raise_for_invoice_service_error(exc: ValueError) -> HTTPException:
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
     if detail.startswith("Due date cannot be earlier than issue date"):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    if detail.startswith("Posted invoices can only update status, due date, and notes"):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    if detail.startswith("Invoice paid status is managed by recorded payments"):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    if detail.startswith("Invoices with completed payments cannot be cancelled"):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    if detail.startswith("Invoice total cannot be reduced below"):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    if detail.startswith("Invoices with recorded payments cannot be deleted"):
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
     if detail in {"Company ID is required", "Failed to create invoice"}:
@@ -79,6 +103,7 @@ async def create_invoice_route(
             company_id=payload.company_id,
             contact_id=payload.contact_id,
             product_id=payload.product_id,
+            source_quote_id=payload.source_quote_id,
             issue_date=payload.issue_date,
             due_date=payload.due_date,
             currency=payload.currency,
@@ -101,6 +126,7 @@ async def list_invoices_route(
     status_filter: str | None = Query(default=None, alias="status"),
     company_id: str | None = Query(default=None),
     number: str | None = Query(default=None),
+    source_quote_id: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     tenant_id: str = Depends(get_current_tenant_id),
@@ -114,6 +140,7 @@ async def list_invoices_route(
             status=status_filter,
             company_id=company_id,
             number_query=number,
+            source_quote_id=source_quote_id,
             limit=limit,
             offset=offset,
         )
@@ -213,11 +240,14 @@ async def delete_invoice_route(
     tenant_id: str = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_auth_db),
 ) -> DeleteResponse:
-    deleted = await delete_invoice(
-        db,
-        tenant_id=tenant_id,
-        invoice_id=invoice_id,
-    )
+    try:
+        deleted = await delete_invoice(
+            db,
+            tenant_id=tenant_id,
+            invoice_id=invoice_id,
+        )
+    except ValueError as exc:
+        raise _raise_for_invoice_service_error(exc) from exc
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
 

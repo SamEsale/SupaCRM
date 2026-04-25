@@ -1,35 +1,38 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## SupaCRM Frontend
 
-## Getting Started
+This frontend is part of the SupaCRM monorepo. The canonical operator/developer startup instructions live at the repo root and in the runbooks.
 
-First, run the development server:
+## Local Frontend Startup
+
+1. Ensure the backend is available at `http://127.0.0.1:8000`
+2. Create `frontend/.env.local` from `frontend/.env.local.example`
+3. Start the frontend:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Or use the repo helper from the workspace root:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+bash scripts/dev/start_local_frontend.sh
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Then open [http://127.0.0.1:3000/login](http://127.0.0.1:3000/login).
 
-## Learn More
+## API Base URL
 
-To learn more about Next.js, take a look at the following resources:
+The frontend requires:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+See:
 
-## Deploy on Vercel
+- [`README.md`](/Users/samesale/Desktop/SupaCRM/README.md)
+- [`docs/runbooks/local_startup.md`](/Users/samesale/Desktop/SupaCRM/docs/runbooks/local_startup.md)
+- [`docs/runbooks/local_login.md`](/Users/samesale/Desktop/SupaCRM/docs/runbooks/local_login.md)
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 

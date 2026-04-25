@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 import uuid
 
@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.invoicing.service import create_invoice
+from app.sales.service import get_deal_by_id
 
 
 ALLOWED_QUOTE_STATUSES: tuple[str, ...] = (
@@ -36,6 +37,7 @@ class QuoteDetails:
     company_id: str
     contact_id: str | None
     deal_id: str | None
+    source_deal_id: str | None
     product_id: str | None
     issue_date: date
     expiry_date: date
@@ -139,6 +141,33 @@ async def _contact_exists_for_tenant(
     return result.scalar_one_or_none() == 1
 
 
+async def _contact_belongs_to_company(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    contact_id: str,
+    company_id: str,
+) -> bool:
+    result = await session.execute(
+        text(
+            """
+            select company_id
+            from public.contacts
+            where tenant_id = cast(:tenant_id as varchar)
+              and id = cast(:contact_id as varchar)
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "contact_id": contact_id,
+        },
+    )
+    row = result.mappings().first()
+    if not row:
+        return False
+    return row["company_id"] == company_id
+
+
 async def _deal_exists_for_tenant(
     session: AsyncSession,
     *,
@@ -160,6 +189,19 @@ async def _deal_exists_for_tenant(
         },
     )
     return result.scalar_one_or_none() == 1
+
+
+async def _deal_belongs_to_company(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    deal_id: str,
+    company_id: str,
+) -> bool:
+    deal = await get_deal_by_id(session, tenant_id=tenant_id, deal_id=deal_id)
+    if deal is None:
+        return False
+    return deal.company_id == company_id
 
 
 async def _product_exists_for_tenant(
@@ -238,6 +280,7 @@ async def create_quote(
     company_id: str,
     contact_id: str | None = None,
     deal_id: str | None = None,
+    source_deal_id: str | None = None,
     product_id: str | None = None,
     issue_date: date,
     expiry_date: date,
@@ -251,6 +294,7 @@ async def create_quote(
     normalized_company_id = company_id.strip()
     normalized_contact_id = _clean_optional(contact_id)
     normalized_deal_id = _clean_optional(deal_id)
+    normalized_source_deal_id = _clean_optional(source_deal_id)
     normalized_product_id = _clean_optional(product_id)
     normalized_currency = _normalize_currency(currency)
     normalized_status = _validate_status(status)
@@ -276,12 +320,49 @@ async def create_quote(
     ):
         raise ValueError(f"Contact does not exist: {normalized_contact_id}")
 
+    if normalized_contact_id is not None and not await _contact_belongs_to_company(
+        session,
+        tenant_id=tenant_id,
+        contact_id=normalized_contact_id,
+        company_id=normalized_company_id,
+    ):
+        raise ValueError(
+            f"Contact does not belong to company: {normalized_contact_id} -> {normalized_company_id}"
+        )
+
     if normalized_deal_id is not None and not await _deal_exists_for_tenant(
         session,
         tenant_id=tenant_id,
         deal_id=normalized_deal_id,
     ):
         raise ValueError(f"Deal does not exist: {normalized_deal_id}")
+
+    if normalized_deal_id is not None and not await _deal_belongs_to_company(
+        session,
+        tenant_id=tenant_id,
+        deal_id=normalized_deal_id,
+        company_id=normalized_company_id,
+    ):
+        raise ValueError(
+            f"Deal does not belong to company: {normalized_deal_id} -> {normalized_company_id}"
+        )
+
+    if normalized_source_deal_id is not None and not await _deal_exists_for_tenant(
+        session,
+        tenant_id=tenant_id,
+        deal_id=normalized_source_deal_id,
+    ):
+        raise ValueError(f"Deal does not exist: {normalized_source_deal_id}")
+
+    if normalized_source_deal_id is not None and not await _deal_belongs_to_company(
+        session,
+        tenant_id=tenant_id,
+        deal_id=normalized_source_deal_id,
+        company_id=normalized_company_id,
+    ):
+        raise ValueError(
+            f"Deal does not belong to company: {normalized_source_deal_id} -> {normalized_company_id}"
+        )
 
     if normalized_product_id is not None and not await _product_exists_for_tenant(
         session,
@@ -302,6 +383,7 @@ async def create_quote(
                 company_id,
                 contact_id,
                 deal_id,
+                source_deal_id,
                 product_id,
                 issue_date,
                 expiry_date,
@@ -317,6 +399,7 @@ async def create_quote(
                 cast(:company_id as varchar),
                 cast(:contact_id as varchar),
                 cast(:deal_id as varchar),
+                cast(:source_deal_id as varchar),
                 cast(:product_id as varchar),
                 :issue_date,
                 :expiry_date,
@@ -332,6 +415,7 @@ async def create_quote(
                 company_id,
                 contact_id,
                 deal_id,
+                source_deal_id,
                 product_id,
                 issue_date,
                 expiry_date,
@@ -350,6 +434,7 @@ async def create_quote(
             "company_id": normalized_company_id,
             "contact_id": normalized_contact_id,
             "deal_id": normalized_deal_id,
+            "source_deal_id": normalized_source_deal_id,
             "product_id": normalized_product_id,
             "issue_date": issue_date,
             "expiry_date": expiry_date,
@@ -371,6 +456,7 @@ async def create_quote(
         company_id=str(row["company_id"]),
         contact_id=row["contact_id"],
         deal_id=row["deal_id"],
+        source_deal_id=row["source_deal_id"],
         product_id=row["product_id"],
         issue_date=row["issue_date"],
         expiry_date=row["expiry_date"],
@@ -391,6 +477,7 @@ async def list_quotes(
     status: str | None = None,
     company_id: str | None = None,
     number_query: str | None = None,
+    source_deal_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> QuoteListResult:
@@ -399,6 +486,7 @@ async def list_quotes(
     status_filter = _validate_status(status_filter_raw) if status_filter_raw else None
     company_filter = _clean_optional(company_id)
     number_search = _clean_optional(number_query)
+    source_deal_filter = _clean_optional(source_deal_id)
 
     count_sql = """
         select count(*)
@@ -413,6 +501,7 @@ async def list_quotes(
             company_id,
             contact_id,
             deal_id,
+            source_deal_id,
             product_id,
             issue_date,
             expiry_date,
@@ -463,6 +552,12 @@ async def list_quotes(
         list_sql += number_clause
         params["number_search"] = f"%{number_search.lower()}%"
 
+    if source_deal_filter:
+        source_deal_clause = " and source_deal_id = cast(:source_deal_id as varchar) "
+        count_sql += source_deal_clause
+        list_sql += source_deal_clause
+        params["source_deal_id"] = source_deal_filter
+
     list_sql += """
         order by created_at desc, id desc
         limit :limit
@@ -484,6 +579,7 @@ async def list_quotes(
                 company_id=str(row["company_id"]),
                 contact_id=row["contact_id"],
                 deal_id=row["deal_id"],
+                source_deal_id=row["source_deal_id"],
                 product_id=row["product_id"],
                 issue_date=row["issue_date"],
                 expiry_date=row["expiry_date"],
@@ -515,6 +611,7 @@ async def get_quote_by_id(
                 company_id,
                 contact_id,
                 deal_id,
+                source_deal_id,
                 product_id,
                 issue_date,
                 expiry_date,
@@ -545,6 +642,7 @@ async def get_quote_by_id(
         company_id=str(row["company_id"]),
         contact_id=row["contact_id"],
         deal_id=row["deal_id"],
+        source_deal_id=row["source_deal_id"],
         product_id=row["product_id"],
         issue_date=row["issue_date"],
         expiry_date=row["expiry_date"],
@@ -554,6 +652,41 @@ async def get_quote_by_id(
         notes=row["notes"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+async def convert_deal_to_quote(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    deal_id: str,
+) -> QuoteDetails:
+    deal = await get_deal_by_id(session, tenant_id=tenant_id, deal_id=deal_id)
+    if deal is None:
+        raise ValueError(f"Deal does not exist: {deal_id}")
+
+    issue_date = date.today()
+    default_expiry_date = issue_date + timedelta(days=30)
+    expiry_date = deal.expected_close_date if deal.expected_close_date and deal.expected_close_date >= issue_date else default_expiry_date
+
+    conversion_note = f"Created from deal {deal.name}"
+    deal_notes = deal.notes.strip() if deal.notes else ""
+    quote_notes = f"{conversion_note}\n{deal_notes}" if deal_notes else conversion_note
+
+    return await create_quote(
+        session,
+        tenant_id=tenant_id,
+        company_id=deal.company_id,
+        contact_id=deal.contact_id,
+        deal_id=deal.id,
+        source_deal_id=deal.id,
+        product_id=deal.product_id,
+        issue_date=issue_date,
+        expiry_date=expiry_date,
+        currency=deal.currency,
+        total_amount=deal.amount,
+        status="draft",
+        notes=quote_notes,
     )
 
 
@@ -580,6 +713,7 @@ async def convert_quote_to_invoice(
         company_id=quote.company_id,
         contact_id=quote.contact_id,
         product_id=quote.product_id,
+        source_quote_id=quote.id,
         issue_date=quote.issue_date,
         due_date=quote.expiry_date,
         currency=quote.currency,
@@ -674,6 +808,7 @@ async def update_quote(
                 company_id,
                 contact_id,
                 deal_id,
+                source_deal_id,
                 product_id,
                 issue_date,
                 expiry_date,
@@ -711,6 +846,7 @@ async def update_quote(
         company_id=str(row["company_id"]),
         contact_id=row["contact_id"],
         deal_id=row["deal_id"],
+        source_deal_id=row["source_deal_id"],
         product_id=row["product_id"],
         issue_date=row["issue_date"],
         expiry_date=row["expiry_date"],
@@ -776,6 +912,7 @@ async def update_quote_status(
                 company_id,
                 contact_id,
                 deal_id,
+                source_deal_id,
                 product_id,
                 issue_date,
                 expiry_date,
@@ -805,6 +942,7 @@ async def update_quote_status(
         company_id=str(row["company_id"]),
         contact_id=row["contact_id"],
         deal_id=row["deal_id"],
+        source_deal_id=row["source_deal_id"],
         product_id=row["product_id"],
         issue_date=row["issue_date"],
         expiry_date=row["expiry_date"],

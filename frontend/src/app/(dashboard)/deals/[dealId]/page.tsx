@@ -253,6 +253,7 @@ export default function DealDetailPage() {
                     ]);
 
                 let resolvedQuotes: Quote[] = [];
+                let resolvedInvoices: Invoice[] = [];
                 try {
                     const linkedQuotes = await getQuotes({
                         company_id: dealResponse.company_id,
@@ -260,16 +261,22 @@ export default function DealDetailPage() {
                         offset: 0,
                     });
                     resolvedQuotes = (linkedQuotes.items ?? []).filter((quote) => quote.deal_id === dealId);
-                    if (isMounted) {
-                        setRelatedFinanceMessage(
-                            "Related invoices are not wired yet. Quote linkage is resolved from supported quote fields only.",
-                        );
-                    }
+
+                    const linkedInvoices = await getInvoices({
+                        company_id: dealResponse.company_id,
+                        limit: 50,
+                        offset: 0,
+                    });
+                    const quoteIds = new Set(resolvedQuotes.map((quote) => quote.id));
+                    resolvedInvoices = (linkedInvoices.items ?? []).filter((invoice) => {
+                        const sourceQuoteId = "source_quote_id" in invoice ? invoice.source_quote_id : null;
+                        return typeof sourceQuoteId === "string" && quoteIds.has(sourceQuoteId);
+                    });
                 } catch (error) {
-                    console.warn("Linked quote lookup failed on deal detail:", error);
+                    console.warn("Linked finance lookup failed on deal detail:", error);
                     if (isMounted) {
                         setRelatedFinanceMessage(
-                            "Related finance documents are not wired yet in the live API. You can still work from this deal.",
+                            "Related finance documents could not be fully loaded. You can still work from this deal.",
                         );
                     }
                 }
@@ -283,6 +290,7 @@ export default function DealDetailPage() {
                 setContacts(contactsResponse.items ?? []);
                 setProducts(productsResponse.items ?? []);
                 setRelatedQuotes(resolvedQuotes);
+                setRelatedInvoices(resolvedInvoices);
             } catch (error) {
                 console.error("Failed to load deal detail:", error);
                 if (!isMounted) {
@@ -488,7 +496,10 @@ export default function DealDetailPage() {
                     <DealFollowUpCard
                         deal={deal}
                         onUpdated={(updatedDeal) => {
-                            setDeal(updatedDeal);
+                            setDeal((currentDeal) => ({
+                                ...(currentDeal ?? updatedDeal),
+                                ...updatedDeal,
+                            }));
                         }}
                     />
 

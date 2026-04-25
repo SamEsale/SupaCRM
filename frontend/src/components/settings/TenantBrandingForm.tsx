@@ -7,7 +7,7 @@ import {
     getCurrentTenant,
     updateCurrentTenant,
 } from "@/services/tenants.service";
-import type { Tenant } from "@/types/tenant";
+import type { Tenant } from "@/types/tenants";
 
 type BrandingFormState = {
     brand_primary_color: string;

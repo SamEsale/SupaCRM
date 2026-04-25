@@ -12,6 +12,11 @@ export async function getProducts(): Promise<ProductListResponse> {
     return response.data;
 }
 
+export async function getProductById(productId: string): Promise<Product> {
+    const response = await apiClient.get<Product>(`/products/${productId}`);
+    return response.data;
+}
+
 export async function createProduct(
     payload: ProductCreateRequest,
 ): Promise<Product> {

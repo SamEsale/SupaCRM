@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -51,6 +52,31 @@ class ContactListQuery(BaseModel):
     q: str | None = None
     limit: int = Field(default=50, ge=1, le=200)
     offset: int = Field(default=0, ge=0)
+
+
+ContactImportRowStatus = Literal["imported", "error"]
+
+
+class ContactImportRequest(BaseModel):
+    csv_text: str = Field(..., min_length=1)
+    create_missing_companies: bool = False
+
+
+class ContactImportRowOut(BaseModel):
+    row_number: int
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
+    company: str | None = None
+    status: ContactImportRowStatus
+    message: str
+
+
+class ContactImportResultOut(BaseModel):
+    total_rows: int
+    imported_rows: int
+    error_rows: int
+    rows: list[ContactImportRowOut]
 
 
 class CompanyCreateRequest(BaseModel):

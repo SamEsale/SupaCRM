@@ -66,6 +66,26 @@ export function formatDealLabel(value: string): string {
         .join(" ");
 }
 
+type LeadCreateHrefOptions = {
+    companyId?: string | null;
+    contactId?: string | null;
+};
+
+export function buildLeadCreateHref(options: LeadCreateHrefOptions = {}): string {
+    const params = new URLSearchParams();
+
+    if (options.companyId) {
+        params.set("company_id", options.companyId);
+    }
+
+    if (options.contactId) {
+        params.set("contact_id", options.contactId);
+    }
+
+    const query = params.toString();
+    return query ? `/sales/leads/create?${query}` : "/sales/leads/create";
+}
+
 export function suggestStatusForStage(
     stage: DealStage,
     currentStatus: DealStatus,
@@ -144,3 +164,23 @@ export function getDealFollowUpLabel(
     return "Upcoming";
 }
 
+export function getOpportunityAttentionReason(
+    deal: Pick<Deal, "stage" | "status" | "next_follow_up_at">,
+    now: Date = new Date(),
+): string | null {
+    if (!isOpportunityDeal(deal.stage, deal.status)) {
+        return null;
+    }
+
+    const followUpState = getDealFollowUpState(deal, now);
+    if (followUpState === "overdue") {
+        return "Overdue";
+    }
+    if (followUpState === "unscheduled") {
+        return "No follow-up scheduled";
+    }
+    if (followUpState === "due-today") {
+        return "Follow-up due today";
+    }
+    return null;
+}

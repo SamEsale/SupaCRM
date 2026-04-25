@@ -325,4 +325,49 @@ describe("SubscriptionBillingPage", () => {
         expect(screen.queryByRole("button", { name: /^start subscription$/i })).toBeNull();
         expect(screen.queryByRole("button", { name: /convert trial to paid/i })).toBeNull();
     });
+
+    it("renders disabled Stripe as a configuration state and hides payment method capture actions", async () => {
+        const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        mocks.getPaymentProviderFoundation.mockResolvedValue({
+            default_provider: "stripe",
+            updated_at: "2026-04-22T10:00:00.000Z",
+            providers: [
+                {
+                    provider: "stripe",
+                    display_name: "Stripe",
+                    is_enabled: false,
+                    is_default: true,
+                    mode: "live",
+                    configuration_state: "configured",
+                    foundation_state: "disabled",
+                    supports_checkout_payments: true,
+                    supports_webhooks: true,
+                    supports_automated_subscriptions: true,
+                    operator_summary: "Stripe is disabled for this tenant.",
+                    validation_errors: [],
+                    updated_at: "2026-04-22T10:00:00.000Z",
+                },
+            ],
+        });
+
+        render(<SubscriptionBillingPage />);
+
+        await waitFor(() => {
+            expect(
+                screen.getAllByText(/stripe is disabled for this tenant/i).length,
+            ).toBeGreaterThan(0);
+        });
+
+        expect(
+            screen.getByText(
+                /enable and configure it in Gateway Settings before starting billing or collecting payment methods/i,
+            ),
+        ).toBeTruthy();
+        expect(screen.queryByRole("button", { name: /add payment method/i })).toBeNull();
+        expect(screen.queryByRole("button", { name: /update payment method/i })).toBeNull();
+        expect(consoleErrorSpy).not.toHaveBeenCalled();
+
+        consoleErrorSpy.mockRestore();
+    });
 });

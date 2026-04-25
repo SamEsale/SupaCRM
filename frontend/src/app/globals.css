@@ -3,6 +3,16 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --brand-primary: #2563EB;
+  --brand-primary-contrast: #FFFFFF;
+  --brand-secondary: #1D4ED8;
+  --sidebar-bg: #111827;
+  --sidebar-text: #FFFFFF;
+  --sidebar-muted-text: #C7D2FE;
+  --sidebar-border: #334155;
+  --sidebar-hover-bg: #1F2937;
+  --sidebar-active-bg: #1E3A8A;
+  --sidebar-active-text: #FFFFFF;
 }
 
 @theme inline {

@@ -5,10 +5,13 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.catalog.image_rules import validate_product_image_count
+
 
 class ProductImageIn(BaseModel):
     position: int = Field(..., ge=1, le=15)
     file_key: str = Field(..., min_length=1, max_length=512)
+    file_url: str | None = Field(default=None, max_length=2048)
 
     @field_validator("file_key")
     @classmethod
@@ -43,8 +46,7 @@ class ProductCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_images(self) -> "ProductCreateRequest":
-        if len(self.images) > 15:
-            raise ValueError("Maximum 15 product images are allowed")
+        validate_product_image_count(len(self.images))
 
         positions = [image.position for image in self.images]
 
@@ -85,8 +87,7 @@ class ProductUpdateRequest(BaseModel):
         if self.images is None:
             return self
 
-        if len(self.images) > 15:
-            raise ValueError("Maximum 15 product images are allowed")
+        validate_product_image_count(len(self.images))
 
         positions = [image.position for image in self.images]
 
@@ -103,6 +104,7 @@ class ProductImageOut(BaseModel):
     position: int
     file_key: str
     created_at: datetime
+    file_url: str | None = None
 
 
 class ProductOut(BaseModel):

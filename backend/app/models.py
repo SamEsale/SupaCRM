@@ -26,8 +26,15 @@ import app.rbac.models  # noqa: F401
 
 # CRM
 import app.crm.models  # noqa: F401
+import app.marketing.models  # noqa: F401
+
+# Commercial / billing
+import app.commercial.models  # noqa: F401
 
 # Sales / Finance
 import app.sales.models  # noqa: F401
+import app.accounting.models  # noqa: F401
+import app.expenses.models  # noqa: F401
 import app.invoicing.models  # noqa: F401
+import app.payments.models  # noqa: F401
 import app.quotes.models  # noqa: F401

@@ -3,11 +3,10 @@
 import { useEffect, useState } from "react";
 
 import {
-    buildTenantUpdatePayload,
     getCurrentTenant,
     updateCurrentTenant,
 } from "@/services/tenants.service";
-import type { Tenant } from "@/types/tenant";
+import type { Tenant } from "@/types/tenants";
 
 type CompanyFormState = {
     name: string;
@@ -22,6 +21,10 @@ type CompanyFormState = {
     default_currency: string;
     secondary_currency: string;
     secondary_currency_rate: string;
+    brand_primary_color: string;
+    brand_secondary_color: string;
+    sidebar_background_color: string;
+    sidebar_text_color: string;
 };
 
 function buildFormState(tenant: Tenant): CompanyFormState {
@@ -38,6 +41,10 @@ function buildFormState(tenant: Tenant): CompanyFormState {
         default_currency: tenant.default_currency ?? "USD",
         secondary_currency: tenant.secondary_currency ?? "",
         secondary_currency_rate: tenant.secondary_currency_rate ?? "",
+        brand_primary_color: tenant.brand_primary_color ?? "#2563EB",
+        brand_secondary_color: tenant.brand_secondary_color ?? "#1D4ED8",
+        sidebar_background_color: tenant.sidebar_background_color ?? "#111827",
+        sidebar_text_color: tenant.sidebar_text_color ?? "#FFFFFF",
     };
 }
 
@@ -99,22 +106,24 @@ export default function TenantCompanySettingsForm() {
             setErrorMessage("");
             setSavedMessage("");
 
-            const updatedTenant = await updateCurrentTenant(
-                buildTenantUpdatePayload(tenant, {
-                    name: form.name.trim(),
-                    legal_name: form.legal_name.trim() || null,
-                    address_line_1: form.address_line_1.trim() || null,
-                    address_line_2: form.address_line_2.trim() || null,
-                    city: form.city.trim() || null,
-                    state_region: form.state_region.trim() || null,
-                    postal_code: form.postal_code.trim() || null,
-                    country: form.country.trim() || null,
-                    vat_number: form.vat_number.trim() || null,
-                    default_currency: form.default_currency.trim().toUpperCase(),
-                    secondary_currency: form.secondary_currency.trim().toUpperCase() || null,
-                    secondary_currency_rate: form.secondary_currency_rate.trim() || null,
-                }),
-            );
+            const updatedTenant = await updateCurrentTenant({
+                name: form.name.trim(),
+                legal_name: form.legal_name.trim() || null,
+                address_line_1: form.address_line_1.trim() || null,
+                address_line_2: form.address_line_2.trim() || null,
+                city: form.city.trim() || null,
+                state_region: form.state_region.trim() || null,
+                postal_code: form.postal_code.trim() || null,
+                country: form.country.trim() || null,
+                vat_number: form.vat_number.trim() || null,
+                default_currency: form.default_currency.trim().toUpperCase(),
+                secondary_currency: form.secondary_currency.trim().toUpperCase() || null,
+                secondary_currency_rate: form.secondary_currency_rate.trim() || null,
+                brand_primary_color: form.brand_primary_color.toUpperCase(),
+                brand_secondary_color: form.brand_secondary_color.toUpperCase(),
+                sidebar_background_color: form.sidebar_background_color.toUpperCase(),
+                sidebar_text_color: form.sidebar_text_color.toUpperCase(),
+            });
 
             setTenant(updatedTenant);
             setForm(buildFormState(updatedTenant));
@@ -162,7 +171,7 @@ export default function TenantCompanySettingsForm() {
                 <div className="grid gap-4 md:grid-cols-2">
                     <div>
                         <label htmlFor="tenant-name" className="mb-2 block text-sm font-medium text-slate-700">
-                            Workspace name
+                            Company name
                         </label>
                         <input
                             id="tenant-name"
@@ -259,7 +268,7 @@ export default function TenantCompanySettingsForm() {
 
                     <div>
                         <label htmlFor="tenant-vat-number" className="mb-2 block text-sm font-medium text-slate-700">
-                            VAT number
+                            VAT / tax identifier
                         </label>
                         <input
                             id="tenant-vat-number"
@@ -299,7 +308,7 @@ export default function TenantCompanySettingsForm() {
 
                 <div>
                     <label htmlFor="tenant-secondary-rate" className="mb-2 block text-sm font-medium text-slate-700">
-                        Manual FX rate
+                        Secondary currency rate
                     </label>
                     <input
                         id="tenant-secondary-rate"
@@ -327,6 +336,96 @@ export default function TenantCompanySettingsForm() {
                     </div>
                 ) : null}
 
+                <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                        <label htmlFor="tenant-brand-primary" className="mb-2 block text-sm font-medium text-slate-700">
+                            Primary Color picker
+                        </label>
+                        <input
+                            id="tenant-brand-primary"
+                            type="color"
+                            value={form.brand_primary_color}
+                            onChange={(event) => updateField("brand_primary_color", event.target.value.toUpperCase())}
+                            className="h-10 w-full rounded-lg border border-slate-300 px-2 py-1"
+                        />
+                        <label htmlFor="tenant-brand-primary-text" className="sr-only">
+                            Primary Color
+                        </label>
+                        <input
+                            id="tenant-brand-primary-text"
+                            value={form.brand_primary_color.toUpperCase()}
+                            onChange={(event) => updateField("brand_primary_color", event.target.value.toUpperCase())}
+                            className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase"
+                        />
+                    </div>
+
+                    <div>
+                        <label htmlFor="tenant-brand-secondary" className="mb-2 block text-sm font-medium text-slate-700">
+                            Secondary Color picker
+                        </label>
+                        <input
+                            id="tenant-brand-secondary"
+                            type="color"
+                            value={form.brand_secondary_color}
+                            onChange={(event) => updateField("brand_secondary_color", event.target.value.toUpperCase())}
+                            className="h-10 w-full rounded-lg border border-slate-300 px-2 py-1"
+                        />
+                        <label htmlFor="tenant-brand-secondary-text" className="sr-only">
+                            Secondary Color
+                        </label>
+                        <input
+                            id="tenant-brand-secondary-text"
+                            value={form.brand_secondary_color.toUpperCase()}
+                            onChange={(event) => updateField("brand_secondary_color", event.target.value.toUpperCase())}
+                            className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase"
+                        />
+                    </div>
+
+                    <div>
+                        <label htmlFor="tenant-sidebar-background" className="mb-2 block text-sm font-medium text-slate-700">
+                            Sidebar Background Color picker
+                        </label>
+                        <input
+                            id="tenant-sidebar-background"
+                            type="color"
+                            value={form.sidebar_background_color}
+                            onChange={(event) => updateField("sidebar_background_color", event.target.value.toUpperCase())}
+                            className="h-10 w-full rounded-lg border border-slate-300 px-2 py-1"
+                        />
+                        <label htmlFor="tenant-sidebar-background-text" className="sr-only">
+                            Sidebar Background Color
+                        </label>
+                        <input
+                            id="tenant-sidebar-background-text"
+                            value={form.sidebar_background_color.toUpperCase()}
+                            onChange={(event) => updateField("sidebar_background_color", event.target.value.toUpperCase())}
+                            className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase"
+                        />
+                    </div>
+
+                    <div>
+                        <label htmlFor="tenant-sidebar-text" className="mb-2 block text-sm font-medium text-slate-700">
+                            Sidebar Text Color picker
+                        </label>
+                        <input
+                            id="tenant-sidebar-text"
+                            type="color"
+                            value={form.sidebar_text_color}
+                            onChange={(event) => updateField("sidebar_text_color", event.target.value.toUpperCase())}
+                            className="h-10 w-full rounded-lg border border-slate-300 px-2 py-1"
+                        />
+                        <label htmlFor="tenant-sidebar-text-text" className="sr-only">
+                            Sidebar Text Color
+                        </label>
+                        <input
+                            id="tenant-sidebar-text-text"
+                            value={form.sidebar_text_color.toUpperCase()}
+                            onChange={(event) => updateField("sidebar_text_color", event.target.value.toUpperCase())}
+                            className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase"
+                        />
+                    </div>
+                </div>
+
                 <div className="flex items-center gap-3">
                     <button
                         type="submit"
@@ -336,6 +435,22 @@ export default function TenantCompanySettingsForm() {
                         {isSaving ? "Saving..." : "Save company settings"}
                     </button>
                 </div>
+
+                <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <h3 className="text-lg font-semibold text-slate-900">Live preview</h3>
+                            <p className="mt-1 text-sm text-slate-600">Source: Operator Manual</p>
+                        </div>
+                        <a
+                            href="/settings/branding"
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                        >
+                            Manage logo
+                        </a>
+                    </div>
+                </section>
+
             </form>
         </section>
     );

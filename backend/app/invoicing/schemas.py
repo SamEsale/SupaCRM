@@ -20,6 +20,7 @@ class InvoiceCreateRequest(BaseModel):
     company_id: str = Field(..., min_length=1, max_length=36)
     contact_id: str | None = Field(default=None, min_length=1, max_length=36)
     product_id: str | None = Field(default=None, min_length=1, max_length=36)
+    source_quote_id: str | None = Field(default=None, min_length=1, max_length=36)
     issue_date: date
     due_date: date
     currency: str = Field(..., min_length=3, max_length=3)
@@ -50,6 +51,9 @@ class InvoiceOut(BaseModel):
     company_id: str
     contact_id: str | None = None
     product_id: str | None = None
+    source_quote_id: str | None = None
+    subscription_id: str | None = None
+    billing_cycle_id: str | None = None
     issue_date: date
     due_date: date
     currency: str

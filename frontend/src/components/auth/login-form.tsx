@@ -11,6 +11,10 @@ import {
     setTokenStorage,
 } from "@/lib/auth-storage";
 
+interface LoginFormProps {
+    isLocalLogin?: boolean;
+}
+
 interface LoginFormState {
     email: string;
     password: string;
@@ -21,28 +25,51 @@ const initialState: LoginFormState = {
     password: "",
 };
 
-function getErrorMessage(error: unknown): string {
-    if (axios.isAxiosError(error)) {
-        const apiMessage =
-            error.response?.data?.detail ||
-            error.response?.data?.message ||
-            error.message;
+function extractApiMessage(value: unknown): string | null {
+    if (typeof value === "string" && value.trim().length > 0) {
+        return value;
+    }
 
-        if (typeof apiMessage === "string" && apiMessage.trim().length > 0) {
-            return apiMessage;
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const message = extractApiMessage(item);
+            if (message) {
+                return message;
+            }
         }
-
-        return "Login request failed.";
+        return null;
     }
 
-    if (error instanceof Error) {
-        return error.message;
+    if (typeof value === "object" && value !== null) {
+        const record = value as Record<string, unknown>;
+        return (
+            extractApiMessage(record.detail) ||
+            extractApiMessage(record.message) ||
+            extractApiMessage(record.error) ||
+            extractApiMessage(record.msg)
+        );
     }
 
-    return "An unexpected error occurred.";
+    return null;
 }
 
-export default function LoginForm() {
+function getErrorMessage(error: unknown): string {
+    if (typeof error === "object" && error !== null) {
+        const response = (error as { response?: { data?: unknown } }).response;
+        const responseMessage = extractApiMessage(response?.data);
+        if (responseMessage) {
+            return responseMessage;
+        }
+    }
+
+    if (axios.isAxiosError(error)) {
+        return extractApiMessage(error.response?.data) || "Login request failed.";
+    }
+
+    return extractApiMessage(error) || "An unexpected error occurred.";
+}
+
+export default function LoginForm(_props: LoginFormProps = {}) {
     const router = useRouter();
 
     const [form, setForm] = useState<LoginFormState>(initialState);

@@ -36,10 +36,13 @@ jobs:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: supacrm
+      DATABASE_APP_USER: supacrm_app
+      DATABASE_APP_PASSWORD: supacrm_app
       DATABASE_URL_SYNC: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/supacrm
       DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/supacrm
       DATABASE_URL_ADMIN_SYNC: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/supacrm
       DATABASE_URL_ADMIN_ASYNC: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/supacrm
+      APP_USER_DSN: postgresql://supacrm_app:supacrm_app@127.0.0.1:5432/supacrm
       REDIS_URL: redis://127.0.0.1:6379/0
       BOOTSTRAP_API_KEY: ci-bootstrap-key
       JWT_SECRET: ci-jwt-secret-ci-jwt-secret-ci-jwt-secret-ci-jwt-secret
@@ -61,12 +64,25 @@ jobs:
         working-directory: backend
         run: alembic upgrade head
 
-      - name: Backend focused checks
+      - name: Configure non-bypass RLS app role
+        run: python backend/scripts/setup_ci_rls_role.py
+
+      - name: Backend Phase 2 hardening checks
         working-directory: backend
         run: |
           python -m pytest -q \
             tests/integration/test_protected_request_transactions.py \
-            tests/integration/test_system_readiness.py -rA
+            tests/integration/test_system_readiness.py \
+            tests/integration/test_auth_boundary.py \
+            tests/integration/test_security_hardening.py \
+            tests/integration/test_tenant_membership_lifecycle.py -rA
+
+      - name: Backend DB-backed RLS checks
+        working-directory: backend
+        run: |
+          python -m pytest -q \
+            tests/integration/test_rls_business_tables_db.py \
+            tests/integration/test_rls_additional_tenant_tables_db.py -rA
 
       - name: Check production shell entrypoints
         run: bash -n scripts/deploy.sh scripts/ops/backup_postgres.sh scripts/ops/restore_postgres.sh scripts/ops/backup_storage.sh scripts/ops/restore_storage.sh
@@ -100,7 +116,12 @@ jobs:
         run: |
           npm run lint
           npx tsc --noEmit
-          npx vitest run tests/auth-propagation.test.ts tests/product-image-rules.test.tsx
+          npx vitest run \
+            tests/auth-propagation.test.ts \
+            tests/protected-route-hydration.test.tsx \
+            tests/finance-amount-validation.test.tsx \
+            tests/finance-invoice-flow.test.tsx \
+            tests/finance-quote-create-flow.test.tsx
 
       - name: Build frontend image
         run: docker build -f frontend/Dockerfile frontend

@@ -361,7 +361,26 @@ async def delete_tenant_user(
     except ValueError as exc:
         raise _raise_for_service_error(exc) from exc
 
-    return {"success": result.removed, "user_id": user_id, "tenant_id": tenant_id}
+    return {"user_id": user_id, "tenant_id": tenant_id, "removed": result.removed}
+
+
+@router.delete(
+    "/me/users/{user_id}/membership",
+    response_model=dict,
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
+)
+async def delete_user_membership(
+    user_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> dict:
+    """Remove a user from the tenant membership using the membership-scoped route."""
+    try:
+        result = await remove_tenant_membership(db, tenant_id=tenant_id, user_id=user_id)
+    except ValueError as exc:
+        raise _raise_for_service_error(exc) from exc
+
+    return {"user_id": user_id, "tenant_id": tenant_id, "removed": result.removed}
 
 
 @router.patch(
@@ -393,7 +412,6 @@ async def update_user_membership(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {
-        "success": True,
         "user_id": result.user_id,
         "tenant_id": result.tenant_id,
         "membership_is_active": result.membership_is_active,

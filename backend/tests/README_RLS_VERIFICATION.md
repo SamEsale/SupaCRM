@@ -4,6 +4,7 @@ This runbook documents how to execute the DB-backed RLS verification suite added
 
 Test file:
 - `backend/tests/integration/test_rls_business_tables_db.py`
+- `backend/tests/integration/test_rls_additional_tenant_tables_db.py`
 
 Target tables:
 - `companies`
@@ -58,7 +59,17 @@ alembic upgrade head
   `APP_USER_DSN` (recommended)
 
 If `APP_USER_DSN` is not set, test fallback is:
-- `postgresql://app_user:AppUser_Strong_Password_123@127.0.0.1:5432/supacrm`
+- `postgresql://supacrm_app:supacrm_app@127.0.0.1:5432/supacrm`
+
+Bootstrap the non-bypass RLS app role before running the DB-backed suites:
+
+```bash
+psql "$DATABASE_URL_ADMIN_SYNC" \
+  -v app_user='supacrm_app' \
+  -v app_password='REPLACE_WITH_STRONG_PASSWORD' \
+  -v db_name='supacrm' \
+  -f scripts/db/bootstrap_rls.sql
+```
 
 4. Role expectations
 - Admin DSN user must be able to seed and clean fixture rows.
@@ -72,7 +83,7 @@ Optional check:
 ```sql
 select rolname, rolsuper, rolbypassrls
 from pg_roles
-where rolname in ('app_user', 'postgres');
+where rolname in ('supacrm_app', 'postgres');
 ```
 
 ## Command To Run
@@ -81,6 +92,14 @@ From repo root:
 
 ```bash
 python -m pytest -q backend/tests/integration/test_rls_business_tables_db.py
+```
+
+Run both DB-backed suites:
+
+```bash
+python -m pytest -q \
+  backend/tests/integration/test_rls_business_tables_db.py \
+  backend/tests/integration/test_rls_additional_tenant_tables_db.py
 ```
 
 Run a single table block (example):

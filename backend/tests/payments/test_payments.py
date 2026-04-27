@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+import os
 from typing import Any
 
 import pytest
 
+os.environ["DEBUG"] = "false"
+
+from app.api import api_router
+from app.payments.routes import get_invoice_payment_summary_route, list_payments_route
 from app.payments.service import (
     create_invoice_payment,
     get_invoice_payment_summary,
@@ -325,6 +330,46 @@ async def test_list_invoice_payments_filters_by_invoice_status_and_method() -> N
     assert result.total == 1
     assert len(result.items) == 1
     assert result.items[0].id == "payment-seeded"
+
+
+@pytest.mark.asyncio
+async def test_list_payments_route_returns_tenant_scoped_records() -> None:
+    response = await list_payments_route(
+        invoice_id="invoice-2",
+        status_filter="completed",
+        method="bank_transfer",
+        limit=50,
+        offset=0,
+        tenant_id="tenant-1",
+        db=FakePaymentsSession(),
+    )
+
+    assert response.total == 1
+    assert len(response.items) == 1
+    assert response.items[0].id == "payment-seeded"
+    assert response.items[0].tenant_id == "tenant-1"
+
+
+@pytest.mark.asyncio
+async def test_get_invoice_payment_summary_route_returns_invoice_payment_summary() -> None:
+    response = await get_invoice_payment_summary_route(
+        invoice_id="invoice-2",
+        tenant_id="tenant-1",
+        db=FakePaymentsSession(),
+    )
+
+    assert response.invoice_id == "invoice-2"
+    assert response.currency == "USD"
+    assert response.completed_amount == Decimal("60.00")
+    assert response.pending_amount == Decimal("20.00")
+    assert response.payment_state == "partially paid"
+
+
+def test_payments_routes_are_registered_on_api_router() -> None:
+    paths = {route.path for route in api_router.routes}
+
+    assert "/payments" in paths
+    assert "/payments/invoices/{invoice_id}/summary" in paths
 
 
 @pytest.mark.asyncio

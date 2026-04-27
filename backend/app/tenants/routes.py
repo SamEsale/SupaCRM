@@ -10,6 +10,8 @@ from app.core.security.rbac import require_permission
 from app.db_deps import get_auth_db
 from app.rbac.permissions import PERMISSION_TENANT_ADMIN
 from app.tenants.schemas import (
+    TenantBrandingOut,
+    TenantBrandingUpdateRequest,
     TenantOut,
     TenantRoleAssignmentBatchOut,
     TenantRoleAssignmentRequest,
@@ -23,16 +25,23 @@ from app.tenants.schemas import (
 from app.tenants.service import (
     assign_roles_to_tenant_user,
     get_tenant_details,
+    get_tenant_branding,
     list_tenant_roles,
     list_tenant_users,
     provision_tenant_user,
     remove_tenant_membership,
+    update_tenant_branding_logo,
     update_tenant_details,
     update_tenant_membership,
     update_tenant_status,
 )
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
+
+DEFAULT_BRAND_PRIMARY_COLOR = "#2563EB"
+DEFAULT_BRAND_SECONDARY_COLOR = "#1D4ED8"
+DEFAULT_SIDEBAR_BACKGROUND_COLOR = "#111827"
+DEFAULT_SIDEBAR_TEXT_COLOR = "#FFFFFF"
 
 
 def _raise_for_service_error(exc: ValueError) -> HTTPException:
@@ -54,6 +63,18 @@ def _raise_for_tenant_update_error(exc: ValueError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
+def _build_branding_response(branding) -> TenantBrandingOut:
+    return TenantBrandingOut(
+        tenant_id=branding.tenant_id,
+        logo_file_key=branding.logo_file_key,
+        logo_url=branding.logo_url,
+        brand_primary_color=branding.brand_primary_color or DEFAULT_BRAND_PRIMARY_COLOR,
+        brand_secondary_color=branding.brand_secondary_color or DEFAULT_BRAND_SECONDARY_COLOR,
+        sidebar_background_color=branding.sidebar_background_color or DEFAULT_SIDEBAR_BACKGROUND_COLOR,
+        sidebar_text_color=branding.sidebar_text_color or DEFAULT_SIDEBAR_TEXT_COLOR,
+    )
+
+
 @router.get(
     "/me",
     response_model=TenantOut,
@@ -67,6 +88,45 @@ async def get_current_tenant(
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     return TenantOut(**asdict(tenant))
+
+
+@router.get(
+    "/me/branding",
+    response_model=TenantBrandingOut,
+)
+async def get_current_tenant_branding(
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> TenantBrandingOut:
+    branding = await get_tenant_branding(db, tenant_id=tenant_id)
+    if branding is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    return _build_branding_response(branding)
+
+
+@router.put(
+    "/me/branding",
+    response_model=TenantBrandingOut,
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
+)
+async def update_current_tenant_branding(
+    payload: TenantBrandingUpdateRequest,
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> TenantBrandingOut:
+    try:
+        branding = await update_tenant_branding_logo(
+            db,
+            tenant_id=tenant_id,
+            logo_file_key=payload.logo_file_key.strip() if payload.logo_file_key else None,
+        )
+    except ValueError as exc:
+        raise _raise_for_tenant_update_error(exc) from exc
+
+    if branding is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    return _build_branding_response(branding)
 
 
 @router.patch(
@@ -301,7 +361,26 @@ async def delete_tenant_user(
     except ValueError as exc:
         raise _raise_for_service_error(exc) from exc
 
-    return {"success": result.removed, "user_id": user_id, "tenant_id": tenant_id}
+    return {"user_id": user_id, "tenant_id": tenant_id, "removed": result.removed}
+
+
+@router.delete(
+    "/me/users/{user_id}/membership",
+    response_model=dict,
+    dependencies=[Depends(require_permission(PERMISSION_TENANT_ADMIN))],
+)
+async def delete_user_membership(
+    user_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_auth_db),
+) -> dict:
+    """Remove a user from the tenant membership using the membership-scoped route."""
+    try:
+        result = await remove_tenant_membership(db, tenant_id=tenant_id, user_id=user_id)
+    except ValueError as exc:
+        raise _raise_for_service_error(exc) from exc
+
+    return {"user_id": user_id, "tenant_id": tenant_id, "removed": result.removed}
 
 
 @router.patch(
@@ -333,7 +412,6 @@ async def update_user_membership(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {
-        "success": True,
         "user_id": result.user_id,
         "tenant_id": result.tenant_id,
         "membership_is_active": result.membership_is_active,

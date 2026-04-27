@@ -2,6 +2,12 @@
 
 import { useEffect, useState } from "react";
 
+import {
+  parseStrictDecimalAmountInput,
+  sanitizeStrictDecimalInput,
+  shouldBlockStrictDecimalKey,
+  TOTAL_AMOUNT_INVALID_MESSAGE,
+} from "@/components/finance/amount-utils";
 import { updateProduct } from "@/services/products.service";
 import type { Product, ProductUpdateRequest } from "@/types/product";
 
@@ -41,10 +47,12 @@ export default function EditProductModal({
   const [formData, setFormData] = useState<FormState>(buildInitialState(product));
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [unitPriceError, setUnitPriceError] = useState<string>("");
 
   useEffect(() => {
     setFormData(buildInitialState(product));
     setErrorMessage("");
+    setUnitPriceError("");
   }, [product, isOpen]);
 
   function updateField<K extends keyof FormState>(field: K, value: FormState[K]): void {
@@ -64,12 +72,19 @@ export default function EditProductModal({
     try {
       setIsSubmitting(true);
       setErrorMessage("");
+      setUnitPriceError("");
+
+      const unitPriceResult = parseStrictDecimalAmountInput(formData.unit_price);
+      if (unitPriceResult.error || unitPriceResult.value === null) {
+        setUnitPriceError(unitPriceResult.error ?? TOTAL_AMOUNT_INVALID_MESSAGE);
+        return;
+      }
 
       const payload: ProductUpdateRequest = {
         name: formData.name.trim(),
         sku: formData.sku.trim(),
         description: formData.description.trim() ? formData.description.trim() : null,
-        unit_price: formData.unit_price.trim(),
+        unit_price: String(unitPriceResult.value),
         currency: formData.currency.trim().toUpperCase(),
         is_active: formData.is_active,
       };
@@ -160,14 +175,26 @@ export default function EditProductModal({
               </label>
               <input
                 id="edit-unit-price"
-                type="number"
-                min="0"
-                step="0.01"
+                type="text"
+                inputMode="decimal"
+                pattern="[0-9]*[.]?[0-9]*"
+                autoComplete="off"
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 value={formData.unit_price}
-                onChange={(event) => updateField("unit_price", event.target.value)}
+                onChange={(event) => {
+                  updateField("unit_price", sanitizeStrictDecimalInput(event.target.value));
+                  setUnitPriceError("");
+                }}
+                onKeyDown={(event) => {
+                  if (shouldBlockStrictDecimalKey(event.key)) {
+                    event.preventDefault();
+                  }
+                }}
                 required
               />
+              {unitPriceError ? (
+                <p className="mt-1 text-sm text-red-600">{unitPriceError}</p>
+              ) : null}
             </div>
 
             <div>

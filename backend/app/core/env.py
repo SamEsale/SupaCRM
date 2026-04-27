@@ -23,7 +23,7 @@ def load_env_supa() -> None:
 
     env_path: Path = (get_repo_root() / ".env.supa").resolve()
     if not env_path.exists():
-        raise RuntimeError(f".env.supa not found at repo root: {env_path}")
+        return
 
     for raw in env_path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()

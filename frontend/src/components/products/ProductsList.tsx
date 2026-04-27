@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 
 import EditProductModal from "@/components/products/EditProductModal";
 import { deleteProduct, getProducts, updateProduct } from "@/services/products.service";
@@ -263,7 +264,12 @@ export default function ProductsList({
                 {visibleProducts.map((product) => (
                   <tr key={product.id} className="hover:bg-slate-50">
                     <td className="border-b border-slate-200 px-4 py-3 text-sm text-slate-900">
-                      {product.name}
+                      <Link
+                        href={`/products/${product.id}`}
+                        className="font-medium text-slate-900 underline underline-offset-2 transition hover:text-slate-700"
+                      >
+                        {product.name}
+                      </Link>
                     </td>
                     <td className="border-b border-slate-200 px-4 py-3 text-sm text-slate-700">
                       {product.sku}

@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import DealsList from "@/components/deals/DealsList";
+import LeadCsvOperationsCard from "@/components/deals/LeadCsvOperationsCard";
 import { getCompanies } from "@/services/companies.service";
 import { getContacts } from "@/services/contacts.service";
 import { getDeals } from "@/services/deals.service";
@@ -129,7 +131,7 @@ export default function DealsPage() {
             <section className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
                 <h1 className="text-3xl font-bold text-slate-900">All Deals</h1>
                 <p className="mt-2 text-sm text-slate-600">
-                    Search and review all deals stored in your CRM.
+                    Search and review all deals stored in your CRM. Lead CSV import and export stay on this sales surface because imported leads are written into the real deal workflow.
                 </p>
 
                 <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -156,6 +158,13 @@ export default function DealsPage() {
                 </div>
             </section>
 
+            <LeadCsvOperationsCard
+                exportQuery={{
+                    q: searchTerm.trim() || undefined,
+                    company_id: selectedCompanyId || undefined,
+                }}
+            />
+
             {isLoading ? (
                 <section className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
                     <h2 className="text-xl font-semibold text-slate-900">
@@ -171,6 +180,15 @@ export default function DealsPage() {
                         Failed to load deals
                     </h2>
                     <p className="mt-2 text-sm text-slate-600">{errorMessage}</p>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            void loadPageData();
+                        }}
+                        className="mt-4 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                    >
+                        Retry
+                    </button>
                 </section>
             ) : filteredDeals.length === 0 ? (
                 <section className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
@@ -180,6 +198,20 @@ export default function DealsPage() {
                     <p className="mt-2 text-sm text-slate-600">
                         No deals matched your current filters.
                     </p>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                        <Link
+                            href="/deals/create"
+                            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+                        >
+                            Add deal
+                        </Link>
+                        <Link
+                            href="/sales/leads/create"
+                            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                        >
+                            Add lead
+                        </Link>
+                    </div>
                 </section>
             ) : (
                 <DealsList

@@ -25,6 +25,7 @@ import type {
     TenantCommercialStatus,
 } from "@/types/commercial";
 import type { PaymentProviderFoundationSnapshot } from "@/types/payments";
+import type { PaymentProviderFoundation } from "@/types/payments";
 
 type BillingNoticeTone = "amber" | "green" | "red" | "slate";
 
@@ -150,6 +151,24 @@ function buildBillingNotice(
     };
 }
 
+function buildProviderConfigurationMessage(
+    foundation: PaymentProviderFoundation | null,
+): string | null {
+    if (!foundation) {
+        return "Payment provider foundation is not available yet. Review gateway settings before trying billing actions.";
+    }
+
+    if (foundation.foundation_state === "disabled") {
+        return `${foundation.display_name} is disabled for this tenant. Enable and configure it in Gateway Settings before starting billing or collecting payment methods.`;
+    }
+
+    if (foundation.foundation_state === "needs_configuration") {
+        return `${foundation.display_name} still needs tenant-scoped configuration. Complete Gateway Settings before starting billing or collecting payment methods.`;
+    }
+
+    return null;
+}
+
 export default function SubscriptionBillingPage() {
     const auth = useAuth();
     const toast = useToast();
@@ -269,6 +288,8 @@ export default function SubscriptionBillingPage() {
     );
     const billingNotice = buildBillingNotice(subscription, subscriptionStatus, defaultPaymentMethod);
     const paymentMethodActionLabel = defaultPaymentMethod ? "Update Payment Method" : "Add Payment Method";
+    const providerConfigurationMessage = buildProviderConfigurationMessage(selectedPlanFoundation);
+    const canCapturePaymentMethod = !providerConfigurationMessage;
 
     const canStartTrial = Boolean(
         selectedPlan
@@ -281,6 +302,7 @@ export default function SubscriptionBillingPage() {
         && selectedPlan.is_active
         && selectedPlan.provider_price_id
         && defaultPaymentMethod
+        && canCapturePaymentMethod
         && selectedPlanFoundation?.foundation_state === "ready"
         && selectedPlanFoundation.supports_automated_subscriptions
         && (!subscription || isTrialSubscription),
@@ -449,7 +471,7 @@ export default function SubscriptionBillingPage() {
                                     {billingNotice.ctaLabel ? (
                                         <button
                                             type="button"
-                                            disabled={activeAction !== ""}
+                                            disabled={activeAction !== "" || !canCapturePaymentMethod}
                                             onClick={() => {
                                                 void handleAddPaymentMethod();
                                             }}
@@ -517,19 +539,26 @@ export default function SubscriptionBillingPage() {
                                         <p className="mt-2 text-xs text-slate-500">
                                             Foundation state: {formatLabel(selectedPlanFoundation?.foundation_state ?? "disabled")}
                                         </p>
+                                        {providerConfigurationMessage ? (
+                                            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                                                {providerConfigurationMessage}
+                                            </div>
+                                        ) : null}
                                     </div>
 
                                     <div className="mt-5 flex flex-wrap gap-3">
-                                        <button
-                                            type="button"
-                                            disabled={activeAction !== ""}
-                                            onClick={() => {
-                                                void handleAddPaymentMethod();
-                                            }}
-                                            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                                        >
-                                            {activeAction === "add_payment_method" ? "Redirecting..." : paymentMethodActionLabel}
-                                        </button>
+                                        {canCapturePaymentMethod ? (
+                                            <button
+                                                type="button"
+                                                disabled={activeAction !== ""}
+                                                onClick={() => {
+                                                    void handleAddPaymentMethod();
+                                                }}
+                                                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                                {activeAction === "add_payment_method" ? "Redirecting..." : paymentMethodActionLabel}
+                                            </button>
+                                        ) : null}
                                         {!subscription || isTrialSubscription ? (
                                             <button
                                                 type="button"

@@ -13,6 +13,7 @@ class ProductImageRecord:
     position: int
     file_key: str
     created_at: datetime
+    file_url: str | None = None
 
 
 @dataclass(slots=True)

@@ -7,7 +7,7 @@ import {
     getCurrentTenant,
     updateCurrentTenant,
 } from "@/services/tenants.service";
-import type { Tenant } from "@/types/tenant";
+import type { Tenant } from "@/types/tenants";
 
 type BrandingFormState = {
     brand_primary_color: string;
@@ -160,25 +160,12 @@ export default function TenantBrandingForm() {
         );
     }
 
-    const logoReference =
-        tenant?.logo_file_key?.trim()
-            ? tenant.logo_file_key
-            : "No logo file key is currently stored.";
-
     return (
         <section className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
             <h2 className="text-2xl font-semibold text-slate-900">Brand Identity</h2>
             <p className="mt-2 text-sm text-slate-600">
-                Update the tenant color fields already supported by the backend. File upload is intentionally not exposed in this phase.
+                Update the tenant brand and sidebar color values already supported by the backend.
             </p>
-
-            <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-medium text-slate-900">Logo reference</p>
-                <p className="mt-2 text-sm text-slate-600">{logoReference}</p>
-                <p className="mt-2 text-xs text-slate-500">
-                    Storage upload is not part of Phase 1, so this page only displays the current reference.
-                </p>
-            </div>
 
             <form className="mt-6 space-y-6" onSubmit={handleSubmit}>
                 <div className="grid gap-4 md:grid-cols-2">

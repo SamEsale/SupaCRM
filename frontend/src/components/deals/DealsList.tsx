@@ -1,5 +1,6 @@
 "use client";
 
+import { getOpportunityAttentionReason } from "@/lib/deals";
 import type { Company, Contact, Deal } from "@/types/crm";
 import type { Product } from "@/types/product";
 
@@ -145,7 +146,12 @@ export default function DealsList({
                                     {formatLabel(deal.status)}
                                 </td>
                                 <td className="border-b border-slate-200 px-4 py-3 text-sm text-slate-700">
-                                    {deal.expected_close_date ?? ""}
+                                    <div>{deal.expected_close_date ?? ""}</div>
+                                    {getOpportunityAttentionReason(deal) ? (
+                                        <div className="mt-1 text-xs font-semibold text-red-700">
+                                            {getOpportunityAttentionReason(deal)}
+                                        </div>
+                                    ) : null}
                                 </td>
                             </tr>
                         ))}

@@ -4,6 +4,12 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import {
+    parseStrictDecimalAmountInput,
+    sanitizeStrictDecimalInput,
+    TOTAL_AMOUNT_INVALID_MESSAGE,
+    shouldBlockStrictDecimalKey,
+} from "@/components/finance/amount-utils";
 import { useAuth } from "@/hooks/use-auth";
 import { getCompanies } from "@/services/companies.service";
 import { getContacts } from "@/services/contacts.service";
@@ -197,8 +203,7 @@ export default function EditInvoicePage() {
     function validateForm(): InvoiceFormErrors {
         const errors: InvoiceFormErrors = {};
         const currency = form.currency.trim().toUpperCase();
-        const totalAmountRaw = form.total_amount.trim();
-        const totalAmount = Number(totalAmountRaw);
+        const totalAmountResult = parseStrictDecimalAmountInput(form.total_amount);
 
         if (!form.company_id) {
             errors.company_id = "Company is required.";
@@ -226,12 +231,8 @@ export default function EditInvoicePage() {
             errors.currency = "Currency must be exactly 3 characters (e.g. USD).";
         }
 
-        if (!totalAmountRaw) {
-            errors.total_amount = "Total amount is required.";
-        } else if (!Number.isFinite(totalAmount)) {
-            errors.total_amount = "Total amount must be a valid number.";
-        } else if (totalAmount < 0) {
-            errors.total_amount = "Total amount cannot be negative.";
+        if (totalAmountResult.error) {
+            errors.total_amount = totalAmountResult.error;
         }
 
         return errors;
@@ -252,6 +253,15 @@ export default function EditInvoicePage() {
             return;
         }
 
+        const totalAmountResult = parseStrictDecimalAmountInput(form.total_amount);
+        if (totalAmountResult.error || totalAmountResult.value === null) {
+            setFormErrors((current) => ({
+                ...current,
+                total_amount: totalAmountResult.error ?? TOTAL_AMOUNT_INVALID_MESSAGE,
+            }));
+            return;
+        }
+
         try {
             submitLockRef.current = true;
             setIsSubmitting(true);
@@ -263,7 +273,7 @@ export default function EditInvoicePage() {
                 issue_date: form.issue_date,
                 due_date: form.due_date,
                 currency: form.currency.trim().toUpperCase(),
-                total_amount: Number(form.total_amount.trim()),
+                total_amount: totalAmountResult.value,
                 notes: form.notes.trim() ? form.notes.trim() : null,
             });
 
@@ -488,17 +498,22 @@ export default function EditInvoicePage() {
                                 Total Amount
                             </label>
                             <input
-                                type="number"
-                                step="0.01"
+                                type="text"
+                                inputMode="decimal"
                                 placeholder="e.g. 1000.00"
                                 value={form.total_amount}
                                 onChange={(event) => {
                                     setForm((current) => ({
                                         ...current,
-                                        total_amount: event.target.value,
+                                        total_amount: sanitizeStrictDecimalInput(event.target.value),
                                     }));
                                     clearFieldError("total_amount");
                                     setSubmitError("");
+                                }}
+                                onKeyDown={(event) => {
+                                    if (shouldBlockStrictDecimalKey(event.key)) {
+                                        event.preventDefault();
+                                    }
                                 }}
                                 className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm ${
                                     formErrors.total_amount ? "border-red-500" : "border-slate-300"

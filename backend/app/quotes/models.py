@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
 
 from app.db import Base
 
 
 class Quote(Base):
     __tablename__ = "quotes"
+    __table_args__ = (UniqueConstraint("tenant_id", "number", name="uq_quotes_tenant_number"),)
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id = Column(
@@ -18,7 +19,7 @@ class Quote(Base):
         index=True,
     )
 
-    number = Column(String(50), nullable=False, unique=True, index=True)
+    number = Column(String(50), nullable=False, index=True)
 
     company_id = Column(
         String(36),
@@ -34,6 +35,12 @@ class Quote(Base):
         String(36),
         ForeignKey("deals.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    source_deal_id = Column(
+        String(36),
+        ForeignKey("deals.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     product_id = Column(
         String(36),
@@ -57,4 +64,3 @@ class Quote(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
-

@@ -7,11 +7,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.catalog.models import ProductImageRecord, ProductRecord
+from app.catalog.image_rules import validate_product_image_count
+from app.integrations.storage.service import presign_download_url
 
 
 def _normalize_images(images: list[dict]) -> list[dict]:
-    if len(images) > 15:
-        raise ValueError("Maximum 15 product images are allowed")
+    validate_product_image_count(len(images))
 
     positions = [int(image["position"]) for image in images]
 
@@ -46,6 +47,7 @@ def _build_product_record(product_row: dict, image_rows: list[dict]) -> ProductR
             position=int(row["position"]),
             file_key=str(row["file_key"]),
             created_at=row["created_at"],
+            file_url=_presigned_product_image_url(str(row["file_key"])),
         )
         for row in sorted(image_rows, key=lambda item: int(item["position"]))
     ]
@@ -63,6 +65,13 @@ def _build_product_record(product_row: dict, image_rows: list[dict]) -> ProductR
         updated_at=product_row["updated_at"],
         images=images,
     )
+
+
+def _presigned_product_image_url(file_key: str) -> str | None:
+    try:
+        return presign_download_url(file_key)
+    except Exception:
+        return None
 
 
 async def _get_product_row(
@@ -172,85 +181,78 @@ async def create_product(
 
     product_id = str(uuid.uuid4())
 
-    try:
+    await db.execute(
+        text(
+            """
+            insert into public.products (
+                id,
+                tenant_id,
+                name,
+                sku,
+                description,
+                unit_price,
+                currency,
+                is_active
+            )
+            values (
+                cast(:id as varchar),
+                cast(:tenant_id as varchar),
+                cast(:name as varchar),
+                cast(:sku as varchar),
+                :description,
+                :unit_price,
+                cast(:currency as varchar),
+                :is_active
+            )
+            """
+        ),
+        {
+            "id": product_id,
+            "tenant_id": tenant_id,
+            "name": normalized_name,
+            "sku": normalized_sku,
+            "description": description,
+            "unit_price": unit_price,
+            "currency": normalized_currency,
+            "is_active": is_active,
+        },
+    )
+
+    for image in normalized_images:
         await db.execute(
             text(
                 """
-                insert into public.products (
+                insert into public.product_images (
                     id,
                     tenant_id,
-                    name,
-                    sku,
-                    description,
-                    unit_price,
-                    currency,
-                    is_active
+                    product_id,
+                    position,
+                    file_key
                 )
                 values (
                     cast(:id as varchar),
                     cast(:tenant_id as varchar),
-                    cast(:name as varchar),
-                    cast(:sku as varchar),
-                    :description,
-                    :unit_price,
-                    cast(:currency as varchar),
-                    :is_active
+                    cast(:product_id as varchar),
+                    :position,
+                    cast(:file_key as varchar)
                 )
                 """
             ),
             {
-                "id": product_id,
+                "id": str(uuid.uuid4()),
                 "tenant_id": tenant_id,
-                "name": normalized_name,
-                "sku": normalized_sku,
-                "description": description,
-                "unit_price": unit_price,
-                "currency": normalized_currency,
-                "is_active": is_active,
+                "product_id": product_id,
+                "position": image["position"],
+                "file_key": image["file_key"],
             },
         )
 
-        for image in normalized_images:
-            await db.execute(
-                text(
-                    """
-                    insert into public.product_images (
-                        id,
-                        tenant_id,
-                        product_id,
-                        position,
-                        file_key
-                    )
-                    values (
-                        cast(:id as varchar),
-                        cast(:tenant_id as varchar),
-                        cast(:product_id as varchar),
-                        :position,
-                        cast(:file_key as varchar)
-                    )
-                    """
-                ),
-                {
-                    "id": str(uuid.uuid4()),
-                    "tenant_id": tenant_id,
-                    "product_id": product_id,
-                    "position": image["position"],
-                    "file_key": image["file_key"],
-                },
-            )
+    product_row = await _get_product_row(db, tenant_id=tenant_id, product_id=product_id)
+    if product_row is None:
+        raise ValueError("Product was created but could not be retrieved")
 
-        product_row = await _get_product_row(db, tenant_id=tenant_id, product_id=product_id)
-        if product_row is None:
-            raise ValueError("Product was created but could not be retrieved")
-
-        image_rows = await _get_product_images(db, tenant_id=tenant_id, product_id=product_id)
-        product = _build_product_record(product_row, image_rows)
-
-        await db.commit()
-        return product
-    except Exception:
-        await db.rollback()
-        raise
+    image_rows = await _get_product_images(db, tenant_id=tenant_id, product_id=product_id)
+    return _build_product_record(product_row, image_rows)
 
 
 async def list_products(
@@ -338,89 +340,82 @@ async def update_product(
         exclude_product_id=product_id,
     )
 
-    try:
+    await db.execute(
+        text(
+            """
+            update public.products
+            set name = cast(:name as varchar),
+                sku = cast(:sku as varchar),
+                description = :description,
+                unit_price = :unit_price,
+                currency = cast(:currency as varchar),
+                is_active = :is_active,
+                updated_at = now()
+            where tenant_id = cast(:tenant_id as varchar)
+              and id = cast(:product_id as varchar)
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "product_id": product_id,
+            "name": new_name,
+            "sku": new_sku,
+            "description": new_description,
+            "unit_price": new_unit_price,
+            "currency": new_currency,
+            "is_active": new_is_active,
+        },
+    )
+
+    if images is not None:
+        normalized_images = _normalize_images(images)
+
         await db.execute(
             text(
                 """
-                update public.products
-                set name = cast(:name as varchar),
-                    sku = cast(:sku as varchar),
-                    description = :description,
-                    unit_price = :unit_price,
-                    currency = cast(:currency as varchar),
-                    is_active = :is_active,
-                    updated_at = now()
+                delete from public.product_images
                 where tenant_id = cast(:tenant_id as varchar)
-                  and id = cast(:product_id as varchar)
+                  and product_id = cast(:product_id as varchar)
                 """
             ),
-            {
-                "tenant_id": tenant_id,
-                "product_id": product_id,
-                "name": new_name,
-                "sku": new_sku,
-                "description": new_description,
-                "unit_price": new_unit_price,
-                "currency": new_currency,
-                "is_active": new_is_active,
-            },
+            {"tenant_id": tenant_id, "product_id": product_id},
         )
 
-        if images is not None:
-            normalized_images = _normalize_images(images)
-
+        for image in normalized_images:
             await db.execute(
                 text(
                     """
-                    delete from public.product_images
-                    where tenant_id = cast(:tenant_id as varchar)
-                      and product_id = cast(:product_id as varchar)
+                    insert into public.product_images (
+                        id,
+                        tenant_id,
+                        product_id,
+                        position,
+                        file_key
+                    )
+                    values (
+                        cast(:id as varchar),
+                        cast(:tenant_id as varchar),
+                        cast(:product_id as varchar),
+                        :position,
+                        cast(:file_key as varchar)
+                    )
                     """
                 ),
-                {"tenant_id": tenant_id, "product_id": product_id},
+                {
+                    "id": str(uuid.uuid4()),
+                    "tenant_id": tenant_id,
+                    "product_id": product_id,
+                    "position": image["position"],
+                    "file_key": image["file_key"],
+                },
             )
 
-            for image in normalized_images:
-                await db.execute(
-                    text(
-                        """
-                        insert into public.product_images (
-                            id,
-                            tenant_id,
-                            product_id,
-                            position,
-                            file_key
-                        )
-                        values (
-                            cast(:id as varchar),
-                            cast(:tenant_id as varchar),
-                            cast(:product_id as varchar),
-                            :position,
-                            cast(:file_key as varchar)
-                        )
-                        """
-                    ),
-                    {
-                        "id": str(uuid.uuid4()),
-                        "tenant_id": tenant_id,
-                        "product_id": product_id,
-                        "position": image["position"],
-                        "file_key": image["file_key"],
-                    },
-                )
+    product_row = await _get_product_row(db, tenant_id=tenant_id, product_id=product_id)
+    if product_row is None:
+        raise ValueError("Updated product could not be retrieved")
 
-        product_row = await _get_product_row(db, tenant_id=tenant_id, product_id=product_id)
-        if product_row is None:
-            raise ValueError("Updated product could not be retrieved")
-
-        image_rows = await _get_product_images(db, tenant_id=tenant_id, product_id=product_id)
-        product = _build_product_record(product_row, image_rows)
-
-        await db.commit()
-        return product
-    except Exception:
-        await db.rollback()
-        raise
+    image_rows = await _get_product_images(db, tenant_id=tenant_id, product_id=product_id)
+    return _build_product_record(product_row, image_rows)
 
 
 async def delete_product(
@@ -433,31 +428,26 @@ async def delete_product(
     if existing is None:
         return False
 
-    try:
-        await db.execute(
-            text(
-                """
-                delete from public.product_images
-                where tenant_id = cast(:tenant_id as varchar)
-                  and product_id = cast(:product_id as varchar)
-                """
-            ),
-            {"tenant_id": tenant_id, "product_id": product_id},
-        )
+    await db.execute(
+        text(
+            """
+            delete from public.product_images
+            where tenant_id = cast(:tenant_id as varchar)
+              and product_id = cast(:product_id as varchar)
+            """
+        ),
+        {"tenant_id": tenant_id, "product_id": product_id},
+    )
 
-        await db.execute(
-            text(
-                """
-                delete from public.products
-                where tenant_id = cast(:tenant_id as varchar)
-                  and id = cast(:product_id as varchar)
-                """
-            ),
-            {"tenant_id": tenant_id, "product_id": product_id},
-        )
+    await db.execute(
+        text(
+            """
+            delete from public.products
+            where tenant_id = cast(:tenant_id as varchar)
+              and id = cast(:product_id as varchar)
+            """
+        ),
+        {"tenant_id": tenant_id, "product_id": product_id},
+    )
 
-        await db.commit()
-        return True
-    except Exception:
-        await db.rollback()
-        raise
+    return True

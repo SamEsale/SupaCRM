@@ -5,6 +5,7 @@ export type ProductImage = {
   position: number;
   file_key: string;
   created_at: string;
+  file_url?: string | null;
 };
 
 export type Product = {
@@ -29,6 +30,7 @@ export type ProductListResponse = {
 export type ProductImageInput = {
   position: number;
   file_key: string;
+  file_url?: string | null;
 };
 
 export type ProductCreateRequest = {

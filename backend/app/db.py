@@ -29,11 +29,15 @@ RULE:
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 from datetime import datetime
+from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 from fastapi import Request
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import Column, DateTime, String, func, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -184,6 +188,23 @@ async def init_db() -> None:
     """
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+async def run_database_migrations() -> None:
+    """
+    Apply Alembic migrations in non-production environments.
+
+    This keeps local development databases aligned with the current schema
+    without weakening production deployment discipline.
+    """
+
+    def _upgrade() -> None:
+        backend_root = Path(__file__).resolve().parents[1]
+        alembic_ini = backend_root / "alembic.ini"
+        config = Config(str(alembic_ini))
+        command.upgrade(config, "head")
+
+    await asyncio.to_thread(_upgrade)
 
 
 async def close_db() -> None:

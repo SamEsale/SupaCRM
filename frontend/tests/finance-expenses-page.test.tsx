@@ -2,6 +2,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+    authState: {
+        isReady: true,
+        isAuthenticated: true,
+        accessToken: "token",
+    },
     getCurrentTenant: vi.fn(),
     getExpenses: vi.fn(),
     createExpense: vi.fn(),
@@ -9,11 +14,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/hooks/use-auth", () => ({
-    useAuth: () => ({
-        isReady: true,
-        isAuthenticated: true,
-        accessToken: "token",
-    }),
+    useAuth: () => mocks.authState,
 }));
 
 vi.mock("@/services/tenants.service", () => ({
@@ -30,6 +31,9 @@ import ExpensesPage from "@/app/(dashboard)/finance/expenses/page";
 
 describe("finance expenses page", () => {
     beforeEach(() => {
+        mocks.authState.isReady = true;
+        mocks.authState.isAuthenticated = true;
+        mocks.authState.accessToken = "token";
         mocks.getCurrentTenant.mockReset();
         mocks.getExpenses.mockReset();
         mocks.createExpense.mockReset();
@@ -99,6 +103,25 @@ describe("finance expenses page", () => {
     });
 
     afterEach(() => cleanup());
+
+    it("does not call protected expense loaders before auth readiness", async () => {
+        mocks.authState.isReady = false;
+
+        const view = render(<ExpensesPage />);
+
+        await waitFor(() => {
+            expect(mocks.getCurrentTenant).not.toHaveBeenCalled();
+            expect(mocks.getExpenses).not.toHaveBeenCalled();
+        });
+
+        mocks.authState.isReady = true;
+        view.rerender(<ExpensesPage />);
+
+        await waitFor(() => {
+            expect(mocks.getCurrentTenant).toHaveBeenCalledTimes(1);
+            expect(mocks.getExpenses).toHaveBeenCalledTimes(1);
+        });
+    });
 
     it("renders expenses and records a new expense", async () => {
         render(<ExpensesPage />);

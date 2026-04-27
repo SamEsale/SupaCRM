@@ -2,6 +2,11 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+    authState: {
+        isReady: true,
+        isAuthenticated: true,
+        accessToken: "token",
+    },
     getCurrentTenant: vi.fn(),
     getRevenueFlowReport: vi.fn(),
     getQuotes: vi.fn(),
@@ -10,11 +15,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/hooks/use-auth", () => ({
-    useAuth: () => ({
-        isReady: true,
-        isAuthenticated: true,
-        accessToken: "token",
-    }),
+    useAuth: () => mocks.authState,
 }));
 
 vi.mock("@/services/reporting.service", () => ({
@@ -41,6 +42,9 @@ import FinancePage from "@/app/(dashboard)/finance/page";
 
 describe("finance overview page", () => {
     beforeEach(() => {
+        mocks.authState.isReady = true;
+        mocks.authState.isAuthenticated = true;
+        mocks.authState.accessToken = "token";
         mocks.getRevenueFlowReport.mockReset();
         mocks.getQuotes.mockReset();
         mocks.getInvoices.mockReset();
@@ -133,6 +137,31 @@ describe("finance overview page", () => {
     });
 
     afterEach(() => cleanup());
+
+    it("does not call protected finance overview loaders before auth readiness", async () => {
+        mocks.authState.isReady = false;
+
+        const view = render(<FinancePage />);
+
+        await waitFor(() => {
+            expect(mocks.getCurrentTenant).not.toHaveBeenCalled();
+            expect(mocks.getRevenueFlowReport).not.toHaveBeenCalled();
+            expect(mocks.getQuotes).not.toHaveBeenCalled();
+            expect(mocks.getInvoices).not.toHaveBeenCalled();
+            expect(mocks.getExpenses).not.toHaveBeenCalled();
+        });
+
+        mocks.authState.isReady = true;
+        view.rerender(<FinancePage />);
+
+        await waitFor(() => {
+            expect(mocks.getCurrentTenant).toHaveBeenCalledTimes(1);
+            expect(mocks.getRevenueFlowReport).toHaveBeenCalledTimes(1);
+            expect(mocks.getQuotes).toHaveBeenCalledTimes(1);
+            expect(mocks.getInvoices).toHaveBeenCalledTimes(1);
+            expect(mocks.getExpenses).toHaveBeenCalledTimes(1);
+        });
+    });
 
     it("renders the commercial flow overview and warns honestly about mixed currencies", async () => {
         render(<FinancePage />);

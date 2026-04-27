@@ -62,6 +62,12 @@ export default function FinancePage() {
         }
 
         if (!auth.isAuthenticated || !auth.accessToken) {
+            setTenant(null);
+            setReport(null);
+            setRecentQuotes([]);
+            setRecentInvoices([]);
+            setRecentExpenses([]);
+            setErrorMessage("");
             setIsLoading(false);
             return;
         }

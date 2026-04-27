@@ -135,6 +135,9 @@ export default function ExpensesPage() {
         }
 
         if (!auth.isAuthenticated || !auth.accessToken) {
+            setTenant(null);
+            setExpenses([]);
+            setLoadError("");
             setIsLoading(false);
             return;
         }

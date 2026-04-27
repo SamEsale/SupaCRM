@@ -79,12 +79,15 @@ export default function FinancePage() {
                 setIsLoading(true);
                 setErrorMessage("");
 
-                const [tenantResponse, reportResponse, quotesResponse, invoicesResponse, expensesResponse] = await Promise.all([
-                    getCurrentTenant(),
+                const [reportResponse, quotesResponse, invoicesResponse, expensesResponse, tenantResponse] = await Promise.all([
                     getRevenueFlowReport(),
                     getQuotes({ limit: 5, offset: 0 }),
                     getInvoices({ limit: 5, offset: 0 }),
                     getExpenses({ limit: 5, offset: 0 }),
+                    getCurrentTenant().catch((error) => {
+                        console.warn("Finance overview could not load tenant metadata:", error);
+                        return null;
+                    }),
                 ]);
 
                 if (!isMounted) {

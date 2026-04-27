@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import axios from "axios";
 
 const mocks = vi.hoisted(() => ({
     authState: {
@@ -179,5 +180,37 @@ describe("finance overview page", () => {
         expect(screen.getByRole("heading", { name: "Invoice Status Breakdown" })).toBeTruthy();
         expect(screen.getByRole("link", { name: "QTE-000101" })).toBeTruthy();
         expect(screen.getByRole("link", { name: "INV-000101" })).toBeTruthy();
+    });
+
+    it("keeps the overview available when tenant metadata is blocked by admin-only access", async () => {
+        mocks.getCurrentTenant.mockRejectedValueOnce(
+            new axios.AxiosError(
+                "Request failed with status code 403",
+                "ERR_BAD_REQUEST",
+                undefined,
+                undefined,
+                {
+                    data: { detail: "Forbidden" },
+                    status: 403,
+                    statusText: "Forbidden",
+                    headers: {},
+                    config: { headers: {} as never },
+                },
+            ),
+        );
+
+        render(<FinancePage />);
+
+        await waitFor(() => {
+            expect(screen.getByRole("heading", { name: "Finance" })).toBeTruthy();
+        });
+
+        expect(screen.queryByText(/Failed to load finance overview/i)).toBeNull();
+        expect(screen.getByRole("heading", { name: "Recent Expenses" })).toBeTruthy();
+        expect(screen.queryByText(/Secondary currency view uses a saved manual rate/i)).toBeNull();
+        expect(mocks.getRevenueFlowReport).toHaveBeenCalledTimes(1);
+        expect(mocks.getQuotes).toHaveBeenCalledTimes(1);
+        expect(mocks.getInvoices).toHaveBeenCalledTimes(1);
+        expect(mocks.getExpenses).toHaveBeenCalledTimes(1);
     });
 });

@@ -36,6 +36,7 @@ export default function BrandingLogoCard() {
     const [isUploading, setIsUploading] = useState<boolean>(false);
     const [errorMessage, setErrorMessage] = useState<string>("");
     const [successMessage, setSuccessMessage] = useState<string>("");
+    const logoPreviewUrl = resolveStoredMediaUrl(branding);
 
     useEffect(() => {
         if (!auth.isReady) {
@@ -166,30 +167,38 @@ export default function BrandingLogoCard() {
                 <p className="mt-4 text-sm text-slate-600">Loading branding settings...</p>
             ) : (
                 <div className="mt-4 grid gap-4 md:grid-cols-[240px_1fr]">
-                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-                        {resolveStoredMediaUrl(branding) ? (
+                    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                        {logoPreviewUrl ? (
                             <img
-                                src={resolveStoredMediaUrl(branding) ?? ""}
+                                src={logoPreviewUrl}
                                 alt="Tenant logo preview"
-                                className="h-48 w-full object-cover"
+                                className="h-48 w-full object-contain bg-white p-6"
                             />
                         ) : (
-                            <div className="flex h-48 items-center justify-center px-4 text-center text-sm text-slate-500">
-                                No logo uploaded yet.
+                            <div className="flex h-48 flex-col items-center justify-center gap-3 px-4 text-center">
+                                <div className="flex h-20 w-20 items-center justify-center rounded-full border border-slate-200 bg-white text-lg font-semibold text-slate-500 shadow-sm">
+                                    SC
+                                </div>
+                                <div>
+                                    <p className="text-sm font-medium text-slate-700">No logo uploaded yet.</p>
+                                    <p className="mt-1 text-xs text-slate-500">
+                                        A neutral placeholder is shown until a tenant logo is added.
+                                    </p>
+                                </div>
                             </div>
                         )}
                     </div>
 
                     <div className="space-y-3">
-                        <p className="text-sm text-slate-700">
-                            Current file key:{" "}
-                            <span className="font-mono text-xs break-all">
-                                {branding?.logo_file_key ?? "not set"}
-                            </span>
-                        </p>
                         <p className="text-sm text-slate-600">
-                            Uploading a new logo replaces the current one. This setting is stored against the tenant and is used across the launch-ready product surfaces.
+                            Uploading a new logo replaces the current one. This setting is stored against the tenant and is used across public and in-app brand surfaces.
                         </p>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <p className="text-sm font-medium text-slate-900">Current file key</p>
+                            <p className="mt-2 font-mono text-xs break-all text-slate-600">
+                                {branding?.logo_file_key ?? "not set"}
+                            </p>
+                        </div>
                         {errorMessage ? (
                             <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                                 {errorMessage}

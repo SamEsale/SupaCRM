@@ -25,6 +25,7 @@ from app.core.middleware.audit_context import AuditContextMiddleware
 from app.core.middleware.request_logging import RequestLoggingMiddleware
 from app.core.middleware.security_headers import SecurityHeadersMiddleware
 from app.core.security.abuse import auth_abuse_tracker
+from app.core.security.auth_cache import auth_cache
 from app.integrations.storage.service import LOCAL_UPLOAD_ROOT
 
 
@@ -108,6 +109,7 @@ def create_app() -> FastAPI:
         abuse_tracker = getattr(app.state, "abuse_tracker", None)
         if abuse_tracker is not None:
             await abuse_tracker.aclose()
+        await auth_cache.aclose()
         await close_db()
 
     return app

@@ -18,6 +18,7 @@ from app.core.security.deps import require_active_tenant
 from app.crm.routes import router as crm_router
 from app.debug.routes import router as debug_router
 from app.expenses.routes import router as expenses_router
+from app.finance.routes import router as finance_router
 from app.integrations.storage.routes import router as storage_router
 from app.internal.commercial_routes import router as internal_commercial_router
 from app.internal.bootstrap_routes import router as internal_bootstrap_router
@@ -93,6 +94,7 @@ def attach_feature_routers(router: APIRouter) -> APIRouter:
     protected_router.include_router(sales_router)
     protected_router.include_router(accounting_router)
     protected_router.include_router(expenses_router)
+    protected_router.include_router(finance_router)
     protected_router.include_router(invoicing_router)
     protected_router.include_router(payments_router)
     protected_router.include_router(quotes_router)

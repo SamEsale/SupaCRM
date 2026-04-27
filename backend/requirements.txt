@@ -62,6 +62,7 @@ pytokens==0.3.0
 pytz==2025.2
 PyYAML==6.0.3
 redis==7.1.0
+reportlab==4.4.10
 requests==2.32.5
 rq==2.6.1
 rsa==4.9.1
